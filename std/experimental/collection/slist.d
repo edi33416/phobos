@@ -1,6 +1,8 @@
 import std.stdio;
-import std.experimental.allocator : IAllocator, theAllocator, make, dispose;
 import std.algorithm.searching : canFind;
+import std.experimental.allocator : IAllocator, theAllocator, make, dispose;
+import std.experimental.allocator.building_blocks.affix_allocator;
+import std.experimental.allocator.gc_allocator;
 
 struct SList(T, Allocator = IAllocator)
 {
@@ -15,19 +17,48 @@ private:
 
         this(T v, Node *n)
         {
-            writefln("Constructing Node with payload: %s\n", v);
+            writefln("Constructing Node with payload: %s", v);
             _payload = v;
             _next = n;
         }
 
         ~this()
         {
-            writefln("Destroying Node with payload: %s\n", _payload);
+            writefln("Destroying Node with payload: %s", _payload);
         }
     }
 
     Node *_head;
-    Allocator _allocator;
+
+    alias Alloc = AffixAllocator!(GCAllocator, uint);
+    alias _allocator = Alloc.instance;
+    //Alloc _allocator;
+
+    @trusted void addRef(Node *node)
+    {
+        assert(node !is null);
+        ++*prefCount(node);
+    }
+
+    @trusted void delRef(Node *node)
+    {
+        assert(node !is null);
+        uint *pref = prefCount(node);
+        if (!*pref)
+        {
+            _allocator.dispose(node);
+        }
+        else
+        {
+            --*pref;
+        }
+    }
+
+    @trusted uint* prefCount(Node *node) const
+    {
+        assert(node !is null);
+        return cast(uint*)(&_allocator.prefix(node));
+    }
 
 public:
     this(U)(U[] values...)
@@ -39,7 +70,7 @@ public:
     this(U)(Allocator allocator, U[] values...)
     if (isImplicitlyConvertible!(U, T))
     {
-        _allocator = allocator;
+        //_allocator = allocator;
         insert(values);
     }
 
@@ -56,15 +87,29 @@ public:
         && isImplicitlyConvertible!(ElementType!Stuff, T)
         && !is(Stuff == T[]))
     {
-        _allocator = allocator;
+        //_allocator = allocator;
         insert(stuff);
+    }
+
+    this(this)
+    {
+        addRef(_head);
     }
 
     ~this()
     {
-        while (!empty)
+        if (*prefCount(_head) > 0)
         {
-            remove();
+            // Then this is a copy, so just remove the head ref, thus deleting
+            // the copy in constant time
+            delRef(_head);
+        }
+        else
+        {
+            while (!empty)
+            {
+                remove();
+            }
         }
     }
 
@@ -82,7 +127,10 @@ public:
     void popFront()
     {
         assert(!empty, "SList.popFront: List is empty");
+        Node *tmpNode = _head;
         _head = _head._next;
+        addRef(_head);
+        delRef(tmpNode);
     }
 
     SList save()
@@ -93,17 +141,17 @@ public:
     size_t insert(Stuff)(Stuff stuff)
     if (isInputRange!Stuff && isImplicitlyConvertible!(ElementType!Stuff, T))
     {
-        if (_allocator is null) _allocator = theAllocator;
+        //if (_allocator is null) _allocator = theAllocator;
 
         size_t result;
         Node *tmpNode;
         Node *tmpHead;
         foreach (item; stuff)
         {
-            //Node *newNode = make!(Node, Allocator)(item, null);
             Node *newNode = _allocator.make!(Node)(item, null);
             (tmpHead ? tmpNode._next : tmpHead) = newNode;
             tmpNode = newNode;
+            addRef(newNode);
             ++result;
         }
 
@@ -113,7 +161,12 @@ public:
         }
 
         tmpNode._next = _head;
+        if (tmpNode._next !is null)
+        {
+            addRef(tmpNode._next);
+        }
         _head = tmpHead;
+        addRef(_head);
         return result;
     }
 
@@ -127,21 +180,22 @@ public:
     {
         Node *tmpNode = _head;
         _head = _head._next;
-        _allocator.dispose(tmpNode);
+        addRef(_head);
+        delRef(tmpNode);
     }
 
 }
 
 void main(string[] args)
 {
-    writefln("Begining of main\n\n");
+    writefln("Begining of main\n");
 
-    auto sl = new SList!(int)();
+    auto sl = SList!(int)();
     sl.insert(10);
     //if (sl !is null)
         //writeln(sl.empty());
     sl.insert(11, 21, 31, 41, 51);
-    sl.insert([11, 21, 31, 41, 51]);
+    sl.insert([12, 22, 32, 42, 52]);
 
     int i;
     auto sl2 = sl.save();
