@@ -8,6 +8,7 @@ struct SList(T, Allocator = IAllocator)
 {
     import std.traits : isImplicitlyConvertible;
     import std.range.primitives : isInputRange, isForwardRange, ElementType;
+    import std.conv : emplace;
 
 private:
     struct Node
@@ -17,14 +18,14 @@ private:
 
         this(T v, Node *n)
         {
-            writefln("Constructing Node with payload: %s", v);
+            debug(CollectionSList) writefln("Constructing Node with payload: %s", v);
             _payload = v;
             _next = n;
         }
 
         ~this()
         {
-            writefln("Destroying Node with payload: %s", _payload);
+            debug(CollectionSList) writefln("Destroying Node with payload: %s", _payload);
         }
     }
 
@@ -37,6 +38,12 @@ private:
     @trusted void addRef(Node *node)
     {
         assert(node !is null);
+        debug(CollectionSList)
+        {
+            uint *pref = prefCount(node);
+            writefln("In addRef for node %s. Has refcount: %s; will be: %s",
+                    node._payload, *pref, *pref + 1);
+        }
         ++*prefCount(node);
     }
 
@@ -44,8 +51,11 @@ private:
     {
         assert(node !is null);
         uint *pref = prefCount(node);
-        if (!*pref)
+        debug(CollectionSList) writefln("In delRef for node %s. Has refcount: %s; will be: %s",
+                node._payload, *pref, *pref - 1);
+        if (*pref == 0)
         {
+            debug(CollectionSList) writefln("Deleting node %s", node._payload);
             _allocator.dispose(node);
         }
         else
@@ -57,7 +67,7 @@ private:
     @trusted uint* prefCount(Node *node) const
     {
         assert(node !is null);
-        return cast(uint*)(&_allocator.prefix(node));
+        return cast(uint*)(&_allocator.prefix(cast(void[Node.sizeof])(*node)));
     }
 
 public:
@@ -93,23 +103,29 @@ public:
 
     this(this)
     {
+        uint *pref = prefCount(_head);
         addRef(_head);
+        debug(CollectionSList) writefln("In postblit for node %s. Has refcount: %s",
+                _head._payload, *pref);
     }
 
     ~this()
     {
-        if (*prefCount(_head) > 0)
+        while (_head !is null && *prefCount(_head) == 0)
         {
-            // Then this is a copy, so just remove the head ref, thus deleting
-            // the copy in constant time
-            delRef(_head);
+            debug(CollectionSList) writefln("In dtor once. Head at %s", _head._payload);
+            Node *tmpNode = _head;
+            _head = _head._next;
+            delRef(tmpNode);
+            debug(CollectionSList) writeln();
         }
-        else
+
+        if (_head !is null && *prefCount(_head) > 0)
         {
-            while (!empty)
-            {
-                remove();
-            }
+            // We reached a copy, so just remove the head ref, thus deleting
+            // the copy in constant time (we are undoing the postblit)
+            debug(CollectionSList) writefln("In dtor twice. Head at %s", _head._payload);
+            delRef(_head);
         }
     }
 
@@ -129,7 +145,10 @@ public:
         assert(!empty, "SList.popFront: List is empty");
         Node *tmpNode = _head;
         _head = _head._next;
-        addRef(_head);
+        if (_head !is null)
+        {
+            addRef(_head);
+        }
         delRef(tmpNode);
     }
 
@@ -151,7 +170,6 @@ public:
             Node *newNode = _allocator.make!(Node)(item, null);
             (tmpHead ? tmpNode._next : tmpHead) = newNode;
             tmpNode = newNode;
-            addRef(newNode);
             ++result;
         }
 
@@ -161,12 +179,12 @@ public:
         }
 
         tmpNode._next = _head;
-        if (tmpNode._next !is null)
-        {
-            addRef(tmpNode._next);
-        }
+        //if (tmpNode._next !is null)
+        //{
+            //--*prefCount(tmpNode._next);
+        //}
         _head = tmpHead;
-        addRef(_head);
+        //addRef(_head);
         return result;
     }
 
@@ -180,43 +198,99 @@ public:
     {
         Node *tmpNode = _head;
         _head = _head._next;
-        addRef(_head);
         delRef(tmpNode);
+        if (_head !is null)
+        {
+            addRef(_head);
+        }
+    }
+
+    debug(CollectionSList) void printRefCount()
+    {
+        Node *tmpNode = _head;
+        while (tmpNode !is null)
+        {
+            writefln("Node %s has ref count %s", tmpNode._payload,
+                    *prefCount(tmpNode));
+            tmpNode = tmpNode._next;
+        }
+        writeln();
     }
 
 }
 
 void main(string[] args)
 {
-    writefln("Begining of main\n");
+    debug(CollectionSList) writefln("Begining of main\n");
 
     auto sl = SList!(int)();
     sl.insert(10);
     //if (sl !is null)
         //writeln(sl.empty());
+    debug(CollectionSList)
+    {
+        writeln("After insert");
+        sl.printRefCount();
+    }
+
     sl.insert(11, 21, 31, 41, 51);
+    debug(CollectionSList)
+    {
+        writeln("After insert");
+        sl.printRefCount();
+    }
+
     sl.insert([12, 22, 32, 42, 52]);
+    debug(CollectionSList)
+    {
+        writeln("After insert");
+        sl.printRefCount();
+    }
 
     int i;
-    auto sl2 = sl.save();
+    auto sl2 = sl;
+    //auto sl3 = sl;
+    debug(CollectionSList)
+    {
+        writeln("After sl2");
+        sl.printRefCount();
+    }
+
     while (!sl.empty())
     {
-        writefln("Elem %s: %s", ++i, sl.front);
+        debug(CollectionSList) writefln("Elem %s: %s", ++i, sl.front);
         sl.popFront;
+        debug(CollectionSList) sl.printRefCount();
     }
-    writeln();
 
+    debug(CollectionSList)
+    {
+        writeln();
+        sl2.printRefCount();
+    }
+
+    auto sl3 = sl2;
     int needle = 10;
-    writefln("Can find %s in list? A: %s\n", needle, canFind(sl2, needle));
+    debug(CollectionSList)
+    {
+        writeln("\nBefore find");
+        writefln("Can find %s in list? A: %s\n", needle, canFind(sl3, needle));
+        writeln("After find\n");
+    }
+    else
+    {
+        assert(canFind(sl3, needle));
+    }
 
-    writefln("Removing Node with value: %s\n", sl2.front);
-    sl2.remove();
+    debug(CollectionSList) writefln("Removing Node with value: %s\n", sl2.front);
+    //sl2.remove();
+    sl2.popFront();
     i = 0;
     while (!sl2.empty())
     {
-        writefln("Elem %s: %s", ++i, sl2.front);
+        debug(CollectionSList) writefln("Elem %s: %s", ++i, sl2.front);
         sl2.popFront;
     }
 
-    writefln("\nLeaving main");
+    debug(CollectionSList) writefln("\nLeaving main");
 }
