@@ -18,19 +18,20 @@ private:
 
         this(T v, Node *n)
         {
-            debug(CollectionSList) writefln("Constructing Node with payload: %s", v);
+            debug(CollectionSList) writefln("SList.Node.ctor: Constructing node" ~
+                    " with payload: %s", v);
             _payload = v;
             _next = n;
         }
 
         ~this()
         {
-            debug(CollectionSList) writefln("Destroying Node with payload: %s", _payload);
+            debug(CollectionSList) writefln("SList.Node.dtor: Destroying node" ~
+                    " with payload: %s", _payload);
         }
     }
 
     Node *_head;
-    Node *_sentinel;
 
     alias Alloc = AffixAllocator!(GCAllocator, uint);
     alias _allocator = Alloc.instance;
@@ -42,7 +43,7 @@ private:
         debug(CollectionSList)
         {
             uint *pref = prefCount(node);
-            writefln("In addRef for node %s. Has refcount: %s; will be: %s",
+            writefln("SList.addRef: Node %s has refcount: %s; will be: %s",
                     node._payload, *pref, *pref + 1);
         }
         ++*prefCount(node);
@@ -51,14 +52,12 @@ private:
     @trusted void delRef(Node *node)
     {
         assert(node !is null);
-        import std.stdio;
-        writefln("In delRef bef prefCount Node %s\n", node._payload);
         uint *pref = prefCount(node);
-        debug(CollectionSList) writefln("In delRef for node %s. Has refcount: %s; will be: %s",
+        debug(CollectionSList) writefln("SList.delRef: Node %s has refcount: %s; will be: %s",
                 node._payload, *pref, *pref - 1);
         if (*pref == 0)
         {
-            debug(CollectionSList) writefln("Deleting node %s", node._payload);
+            debug(CollectionSList) writefln("SList.delRef: Deleting node %s", node._payload);
             _allocator.dispose(node);
         }
         else
@@ -83,8 +82,12 @@ public:
     this(U)(Allocator allocator, U[] values...)
     if (isImplicitlyConvertible!(U, T))
     {
+        debug(CollectionSList)
+        {
+            writefln("SList.ctor: begin");
+            scope(exit) writefln("SList.ctor: end");
+        }
         //_allocator = allocator;
-        _head = _sentinel = _allocator.make!(Node)(0, null);
         insert(values);
     }
 
@@ -101,54 +104,75 @@ public:
         && isImplicitlyConvertible!(ElementType!Stuff, T)
         && !is(Stuff == T[]))
     {
+        debug(CollectionSList)
+        {
+            writefln("SList.ctor: begin");
+            scope(exit) writefln("SList.ctor: end");
+        }
         //_allocator = allocator;
-        _head = _sentinel = _allocator.make!(Node)(0, null);
         insert(stuff);
     }
 
     this(this)
     {
-        if (_sentinel is null)
+        debug(CollectionSList)
         {
-            _head = _sentinel = _allocator.make!(Node)(0, null);
+            writefln("SList.postblit: begin");
+            scope(exit) writefln("SList.postblit: end");
         }
-
-        uint *pref = prefCount(_head);
-        addRef(_head);
-        debug(CollectionSList) writefln("In postblit for node %s. Has refcount: %s",
-                _head._payload, *pref);
+        if (_head !is null)
+        {
+            uint *pref = prefCount(_head);
+            addRef(_head);
+            debug(CollectionSList) writefln("SList.postblit: Node %s has refcount: %s",
+                    _head._payload, *pref);
+        }
     }
 
     ~this()
     {
-        writefln("Begin Dtor");
+        debug(CollectionSList)
+        {
+            writefln("SList.dtor: Begin for instance %s of type %s",
+                cast(size_t)(&this), typeof(this).stringof);
+            scope(exit) writefln("SList.dtor: End for instance %s of type %s",
+                    cast(size_t)(&this), typeof(this).stringof);
+        }
+        destroyUnused();
+    }
+
+    void destroyUnused()
+    {
+        debug(CollectionSList)
+        {
+            writefln("SList.destoryUnused: begin");
+            scope(exit) writefln("SList.destoryUnused: end");
+        }
         while (_head !is null && *prefCount(_head) == 0)
         {
-            debug(CollectionSList) writefln("In dtor once. Head at %s", _head._payload);
+            debug(CollectionSList) writefln("SList.destoryUnused: One ref with head at %s",
+                    _head._payload);
             Node *tmpNode = _head;
             _head = _head._next;
             delRef(tmpNode);
-            debug(CollectionSList) writeln();
         }
 
         if (_head !is null && *prefCount(_head) > 0)
         {
             // We reached a copy, so just remove the head ref, thus deleting
             // the copy in constant time (we are undoing the postblit)
-            debug(CollectionSList) writefln("In dtor twice. Head at %s", _head._payload);
+            debug(CollectionSList) writefln("SList.destoryUnused: Multiple refs with head at %s",
+                    _head._payload);
             delRef(_head);
         }
-        writefln("End Dtor");
     }
-
-    typeof(this) opAssign();
 
     bool empty()
     {
-        return _head is _sentinel;
+        return _head is null;
     }
 
-    T front()
+    ref T front()
     {
         assert(!empty, "SList.front: List is empty");
         return _head._payload;
@@ -156,41 +180,44 @@ public:
 
     void popFront()
     {
+        debug(CollectionSList)
+        {
+            writefln("SList.popFront: begin");
+            scope(exit) writefln("SList.popFront: end");
+        }
         assert(!empty, "SList.popFront: List is empty");
-
-        import std.stdio;
-        writefln("In pop front for node %s", _head._payload);
 
         Node *tmpNode = _head;
         _head = _head._next;
-        writeln("PF bef if");
         if (*prefCount(tmpNode) > 0 &&  _head !is null)
         {
             // If we have another copy of the list then the refcount
             // must increase, otherwise it will remain the same
-            writeln("PF bef add ref");
+            // This condition is needed because the recounting is zero based
             addRef(_head);
         }
-
-        writeln("PF bef del ref");
         delRef(tmpNode);
     }
 
     SList save()
     {
+        debug(CollectionSList)
+        {
+            writefln("SList.save: begin");
+            scope(exit) writefln("SList.save: end");
+        }
         return this;
     }
 
     size_t insert(Stuff)(Stuff stuff)
     if (isInputRange!Stuff && isImplicitlyConvertible!(ElementType!Stuff, T))
     {
-        //if (_allocator is null) _allocator = theAllocator;
-        writeln("Here");
-        if (_sentinel is null)
+        debug(CollectionSList)
         {
-            _head = _sentinel = _allocator.make!(Node)(0, null);
+            writefln("SList.insert: begin");
+            scope(exit) writefln("SList.insert: end");
         }
-
+        //if (_allocator is null) _allocator = theAllocator;
 
         size_t result;
         Node *tmpNode;
@@ -209,12 +236,7 @@ public:
         }
 
         tmpNode._next = _head;
-        //if (tmpNode._next !is null)
-        //{
-            //--*prefCount(tmpNode._next);
-        //}
         _head = tmpHead;
-        //addRef(_head);
         return result;
     }
 
@@ -222,6 +244,90 @@ public:
     if (isImplicitlyConvertible!(Stuff, T))
     {
         return insert(stuff);
+    }
+
+    auto ref opBinary(string op, U)(auto ref U rhs)
+        if (op == "~" && (is (U == typeof(this)) || is (U == T)))
+    {
+        debug(CollectionSList)
+        {
+            writefln("SList.opBinary!~: begin");
+            scope(exit) writefln("SList.opBinary!~: end");
+        }
+
+        typeof(this) newList;
+        newList.insert(rhs);
+        newList.insert(this);
+        return newList;
+    }
+
+    auto ref opAssign(ref typeof(this) rhs)
+    {
+        debug(CollectionSList)
+        {
+            writefln("SList.opAssign: begin");
+            scope(exit) writefln("SList.opAssign: end");
+        }
+
+        if (rhs._head !is null && _head is rhs._head)
+        {
+            return this;
+        }
+
+        destroyUnused();
+        if (rhs._head !is null)
+        {
+            _head = rhs._head;
+            addRef(_head);
+            uint *pref = prefCount(_head);
+            debug(CollectionSList) writefln("SList.opAssign: Node %s has refcount: %s",
+                    _head._payload, *pref);
+        }
+        return this;
+    }
+
+    auto ref opOpAssign(string op)(ref typeof(this) rhs)
+        if (op == "~")
+    {
+        debug(CollectionSList)
+        {
+            writefln("SList.opOpAssign!~: %s begin", typeof(this).stringof);
+            scope(exit) writefln("SList.opOpAssign!~: %s end", typeof(this).stringof);
+        }
+
+        if (rhs._head is null || _head is rhs._head)
+        {
+            return this;
+        }
+        else if (_head is null)
+        {
+            _head = rhs._head;
+            addRef(_head);
+            uint *pref = prefCount(_head);
+            debug(CollectionSList) writefln("SList.opOpAssign!~: Node %s has refcount: %s",
+                    _head._payload, *pref);
+        }
+        else
+        {
+            Node *endNode;
+            for (endNode = _head; endNode._next !is null; endNode = endNode._next) { }
+            endNode._next = rhs._head;
+            addRef(endNode._next);
+            uint *pref = prefCount(endNode._next);
+            debug(CollectionSList) writefln("SList.opOpAssign!~: Node %s has refcount: %s",
+                    endNode._next._payload, *pref);
+        }
+        return this;
+    }
+
+    auto ref opOpAssign(string op)(ref T rhs)
+        if (op == "~")
+    {
+        debug(CollectionSList)
+        {
+            writefln("SList.opOpAssign!~: %s begin", T.stringof);
+            scope(exit) writefln("SList.opOpAssign!~: %s end", T.stringof);
+        }
     }
 
     void remove()
@@ -232,84 +338,113 @@ public:
 
     debug(CollectionSList) void printRefCount()
     {
+        writefln("SList.printRefCount: begin");
+        scope(exit) writefln("SList.printRefCount: end");
+
         Node *tmpNode = _head;
         while (tmpNode !is null)
         {
-            writefln("Node %s has ref count %s", tmpNode._payload,
-                    *prefCount(tmpNode));
+            writefln("SList.printRefCount: Node %s has ref count %s",
+                    tmpNode._payload, *prefCount(tmpNode));
             tmpNode = tmpNode._next;
         }
-        writeln();
     }
-
 }
 
 @trusted unittest
 {
-    auto sl = SList!int(1);
-    //auto sl2 = sl;
+    auto sl = SList!(immutable int)(1);
+    SList!(immutable int) sl2;
+
+    auto sl3 = sl ~ sl2;
+    sl3 = sl3 ~ 4;
 
     debug(CollectionSList) sl.printRefCount();
-    //debug(CollectionSList) sl2.printRefCount();
+    debug(CollectionSList) sl2.printRefCount();
+    debug(CollectionSList) sl3.printRefCount();
 }
 
-//@trusted unittest
-//{
-    //import std.algorithm.comparison : equal;
-    //import std.algorithm.searching : canFind, find;
+@trusted unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.algorithm.searching : canFind;
 
-    //auto sl = SList!int();
-    //assert(sl.empty);
+    auto sl = SList!int();
+    assert(sl.empty);
 
-    //sl.insert(1);
-    //sl.insert([2]);
-    //sl.insert([3, 4, 5]);
-    //sl.insert(6, 7, 8);
+    sl.insert(1, 2, 3);
+    assert(sl.front == 1);
+    assert(equal(sl, sl));
+    assert(equal(sl, [1, 2, 3]));
 
-    //assert(equal(sl, [6, 7, 8, 3, 4, 5, 2, 1]));
+    sl.popFront();
+    assert(sl.front == 2);
+    assert(equal(sl, [2, 3]));
 
-    //sl.remove();
-    //assert(equal(sl, [7, 8, 3, 4, 5, 2, 1]));
+    sl.insert([4, 5, 6]);
+    sl.insert(7);
+    sl.insert([8]);
+    assert(equal(sl, [8, 7, 4, 5, 6, 2, 3]));
 
-    //assert(canFind(sl, 2));
-    //auto sl2 = sl;
+    sl.front = 9;
+    assert(equal(sl, [9, 7, 4, 5, 6, 2, 3]));
 
-    //import std.stdio;
-    //writefln("Can find -1? A: %s\n", sl.canFind(-1));
-//}
+    assert(canFind(sl, 2));
+    assert(!canFind(sl, -1));
+}
 
-//@trusted unittest
-//{
-    //import std.algorithm.comparison : equal;
+@trusted unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.algorithm.searching : canFind;
 
-    //auto sl = SList!int();
-    //sl.insert(10, 20, 30);
+    auto sl = SList!(immutable int)();
+    assert(sl.empty);
 
-    //auto sl2 = SList!int(sl);
+    sl.insert(1, 2, 3);
+    assert(sl.front == 1);
+    assert(equal(sl, sl));
+    assert(equal(sl, [1, 2, 3]));
 
-    //assert(equal(sl, sl2));
-    //writefln("Are equal? A: %s\n", equal(sl, sl2));
-    //debug(CollectionSList)
-    //{
-        //writefln("For sl");
-        //sl.printRefCount();
-        //writefln("\nFor sl2");
-        //sl2.printRefCount();
-    //}
+    sl.popFront();
+    assert(sl.front == 2);
+    assert(equal(sl, [2, 3]));
 
-    //sl.popFront();
-    //assert(equal(sl, [20, 30]));
-    //assert(equal(sl2, [10, 20, 30]));
-    //debug(CollectionSList)
-    //{
-        //writefln("For sl");
-        //sl.printRefCount();
-        //writefln("\nFor sl2");
-        //sl2.printRefCount();
-    //}
+    sl.insert([4, 5, 6]);
+    sl.insert(7);
+    sl.insert([8]);
+    assert(equal(sl, [8, 7, 4, 5, 6, 2, 3]));
 
-    //writeln("End of unittest");
-//}
+    // Cannot modify immutable values
+    static assert(!__traits(compiles, sl.front = 9));
+
+    assert(canFind(sl, 2));
+    assert(!canFind(sl, -1));
+}
+
+@trusted unittest
+{
+    import std.algorithm.comparison : equal;
+
+    auto sl = SList!int(1, 2, 3);
+    auto sl2 = SList!int(sl);
+    assert(equal(sl, sl2));
+
+    sl.popFront();
+    assert(equal(sl, [2, 3]));
+    assert(equal(sl2, [1, 2, 3]));
+
+    SList!int sl3;
+    sl3.insert(sl);
+    sl.popFront();
+    assert(equal(sl, [3]));
+    assert(equal(sl3, [2, 3]));
+
+    auto sl4 = sl3;
+    assert(sl3.front == 2);
+    sl4.front = 5;
+    assert(sl3.front == 5);
+}
 
 void main(string[] args)
 {
