@@ -4,6 +4,19 @@ import std.experimental.allocator : IAllocator, theAllocator, make, dispose;
 import std.experimental.allocator.building_blocks.affix_allocator;
 import std.experimental.allocator.gc_allocator;
 
+version(unittest)
+{
+    import std.experimental.allocator.mallocator;
+    import std.experimental.allocator.building_blocks.stats_collector,
+        std.stdio;
+
+    private alias Alloc = StatsCollector!(
+                        AffixAllocator!(Mallocator, uint),
+                        Options.bytesUsed
+    );
+    Alloc _allocator;
+}
+
 struct SList(T, Allocator = IAllocator)
 {
     import std.traits : isImplicitlyConvertible;
@@ -33,9 +46,15 @@ private:
 
     Node *_head;
 
-    alias Alloc = AffixAllocator!(GCAllocator, uint);
-    alias _allocator = Alloc.instance;
-    //Alloc _allocator;
+    version (unittest)
+    {
+    }
+    else
+    {
+        alias Alloc = AffixAllocator!(GCAllocator, uint);
+        alias _allocator = Alloc.instance;
+        //Alloc _allocator;
+    }
 
     @trusted void addRef(Node *node)
     {
@@ -69,7 +88,7 @@ private:
     @trusted uint* prefCount(Node *node) const
     {
         assert(node !is null);
-        return cast(uint*)(&_allocator.prefix(cast(void[Node.sizeof])(*node)));
+        return cast(uint*)(&_allocator.parent.prefix(cast(void[Node.sizeof])(*node)));
     }
 
 public:
@@ -247,7 +266,7 @@ public:
     }
 
     auto ref opBinary(string op, U)(auto ref U rhs)
-        if (op == "~" && (is (U == typeof(this)) || is (U == T)))
+        if (op == "~" && (is (U == typeof(this)) || is (U : T)))
     {
         debug(CollectionSList)
         {
@@ -261,7 +280,7 @@ public:
         return newList;
     }
 
-    auto ref opAssign(ref typeof(this) rhs)
+    auto ref opAssign()(auto ref typeof(this) rhs)
     {
         debug(CollectionSList)
         {
@@ -351,12 +370,13 @@ public:
     }
 }
 
-@trusted unittest
+version (unittest) private @trusted void testConcatAndAppend()
 {
     auto sl = SList!(immutable int)(1);
     SList!(immutable int) sl2;
 
     auto sl3 = sl ~ sl2;
+    //immutable int x = 4;
     sl3 = sl3 ~ 4;
 
     debug(CollectionSList) sl.printRefCount();
@@ -365,6 +385,12 @@ public:
 }
 
 @trusted unittest
+{
+    testConcatAndAppend();
+    assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
+}
+
+version (unittest) private @trusted void testSimple()
 {
     import std.algorithm.comparison : equal;
     import std.algorithm.searching : canFind;
@@ -395,6 +421,12 @@ public:
 
 @trusted unittest
 {
+    testSimple();
+    assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
+}
+
+version (unittest) private @trusted void testSimpleImmutable()
+{
     import std.algorithm.comparison : equal;
     import std.algorithm.searching : canFind;
 
@@ -424,6 +456,12 @@ public:
 
 @trusted unittest
 {
+    testSimpleImmutable();
+    assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
+}
+
+version (unittest) private @trusted void testCopyAndRef()
+{
     import std.algorithm.comparison : equal;
 
     auto sl = SList!int(1, 2, 3);
@@ -444,6 +482,12 @@ public:
     assert(sl3.front == 2);
     sl4.front = 5;
     assert(sl3.front == 5);
+}
+
+@trusted unittest
+{
+    testCopyAndRef();
+    assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
 }
 
 void main(string[] args)
