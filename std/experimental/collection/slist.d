@@ -218,7 +218,7 @@ public:
         delRef(tmpNode);
     }
 
-    SList save()
+    typeof(this) save()
     {
         debug(CollectionSList)
         {
@@ -226,6 +226,16 @@ public:
             scope(exit) writefln("SList.save: end");
         }
         return this;
+    }
+
+    typeof(this) dup()
+    {
+        debug(CollectionSList)
+        {
+            writefln("SList.dup: begin");
+            scope(exit) writefln("SList.dup: end");
+        }
+        return typeof(this)(this);
     }
 
     size_t insert(Stuff)(Stuff stuff)
@@ -265,6 +275,51 @@ public:
         return insert(stuff);
     }
 
+    size_t insertBack(Stuff)(Stuff stuff)
+    if (isInputRange!Stuff && isImplicitlyConvertible!(ElementType!Stuff, T))
+    {
+        debug(CollectionSList)
+        {
+            writefln("SList.insertBack: begin");
+            scope(exit) writefln("SList.insertBack: end");
+        }
+
+        size_t result;
+        Node *tmpNode;
+        Node *tmpHead;
+        foreach (item; stuff)
+        {
+            Node *newNode = _allocator.make!(Node)(item, null);
+            (tmpHead ? tmpNode._next : tmpHead) = newNode;
+            tmpNode = newNode;
+            ++result;
+        }
+
+        if (!tmpNode)
+        {
+            return 0;
+        }
+
+        if (_head is null)
+        {
+            _head = tmpHead;
+        }
+        else
+        {
+            Node *endNode;
+            for (endNode = _head; endNode._next !is null; endNode = endNode._next) { }
+            endNode._next = tmpHead;
+        }
+
+        return result;
+    }
+
+    size_t insertBack(Stuff)(Stuff[] stuff...)
+    if (isImplicitlyConvertible!(Stuff, T))
+    {
+        return insertBack(stuff);
+    }
+
     auto ref opBinary(string op, U)(auto ref U rhs)
         if (op == "~" && (is (U == typeof(this)) || is (U : T)))
     {
@@ -274,8 +329,7 @@ public:
             scope(exit) writefln("SList.opBinary!~: end");
         }
 
-        typeof(this) newList;
-        newList.insert(rhs);
+        typeof(this) newList = typeof(this)(rhs);
         newList.insert(this);
         return newList;
     }
@@ -293,20 +347,21 @@ public:
             return this;
         }
 
-        destroyUnused();
         if (rhs._head !is null)
         {
-            _head = rhs._head;
-            addRef(_head);
-            uint *pref = prefCount(_head);
+            addRef(rhs._head);
+            uint *pref = prefCount(rhs._head);
             debug(CollectionSList) writefln("SList.opAssign: Node %s has refcount: %s",
-                    _head._payload, *pref);
+                    rhs._head._payload, *pref);
         }
+        destroyUnused();
+        _head = rhs._head;
+
         return this;
     }
 
-    auto ref opOpAssign(string op)(ref typeof(this) rhs)
-        if (op == "~")
+    auto ref opOpAssign(string op, U)(auto ref U rhs)
+        if (op == "~" && (is (U == typeof(this)) || is (U : T)))
     {
         debug(CollectionSList)
         {
@@ -314,39 +369,8 @@ public:
             scope(exit) writefln("SList.opOpAssign!~: %s end", typeof(this).stringof);
         }
 
-        if (rhs._head is null || _head is rhs._head)
-        {
-            return this;
-        }
-        else if (_head is null)
-        {
-            _head = rhs._head;
-            addRef(_head);
-            uint *pref = prefCount(_head);
-            debug(CollectionSList) writefln("SList.opOpAssign!~: Node %s has refcount: %s",
-                    _head._payload, *pref);
-        }
-        else
-        {
-            Node *endNode;
-            for (endNode = _head; endNode._next !is null; endNode = endNode._next) { }
-            endNode._next = rhs._head;
-            addRef(endNode._next);
-            uint *pref = prefCount(endNode._next);
-            debug(CollectionSList) writefln("SList.opOpAssign!~: Node %s has refcount: %s",
-                    endNode._next._payload, *pref);
-        }
+        insertBack(rhs);
         return this;
-    }
-
-    auto ref opOpAssign(string op)(ref T rhs)
-        if (op == "~")
-    {
-        debug(CollectionSList)
-        {
-            writefln("SList.opOpAssign!~: %s begin", T.stringof);
-            scope(exit) writefln("SList.opOpAssign!~: %s end", T.stringof);
-        }
     }
 
     void remove()
@@ -372,16 +396,29 @@ public:
 
 version (unittest) private @trusted void testConcatAndAppend()
 {
-    auto sl = SList!(immutable int)(1);
-    SList!(immutable int) sl2;
+    import std.algorithm.comparison : equal;
+
+    auto sl = SList!(int)(1, 2, 3);
+    SList!(int) sl2;
 
     auto sl3 = sl ~ sl2;
-    //immutable int x = 4;
-    sl3 = sl3 ~ 4;
+    assert(equal(sl3, [1, 2, 3]));
 
-    debug(CollectionSList) sl.printRefCount();
-    debug(CollectionSList) sl2.printRefCount();
-    debug(CollectionSList) sl3.printRefCount();
+    auto sl4 = sl3;
+    sl3 = sl3 ~ 4;
+    assert(equal(sl3, [1, 2, 3, 4]));
+    assert(equal(sl4, [1, 2, 3]));
+
+    sl4 = sl3;
+    sl3 ~= 10;
+    assert(equal(sl3, [1, 2, 3, 4, 10]));
+    assert(equal(sl4, [1, 2, 3, 4, 10]));
+
+    writefln("sl is %s: ", sl3);
+
+    sl3 ~= sl3;
+    assert(equal(sl3, [1, 2, 3, 4, 10, 1, 2, 3, 4, 10]));
+    assert(equal(sl4, [1, 2, 3, 4, 10, 1, 2, 3, 4, 10]));
 }
 
 @trusted unittest
@@ -412,11 +449,15 @@ version (unittest) private @trusted void testSimple()
     sl.insert([8]);
     assert(equal(sl, [8, 7, 4, 5, 6, 2, 3]));
 
+    sl.insertBack(0, 1);
+    sl.insertBack([-1, -2]);
+    assert(equal(sl, [8, 7, 4, 5, 6, 2, 3, 0, 1, -1, -2]));
+
     sl.front = 9;
-    assert(equal(sl, [9, 7, 4, 5, 6, 2, 3]));
+    assert(equal(sl, [9, 7, 4, 5, 6, 2, 3, 0, 1, -1, -2]));
 
     assert(canFind(sl, 2));
-    assert(!canFind(sl, -1));
+    assert(!canFind(sl, -10));
 }
 
 @trusted unittest
@@ -447,11 +488,15 @@ version (unittest) private @trusted void testSimpleImmutable()
     sl.insert([8]);
     assert(equal(sl, [8, 7, 4, 5, 6, 2, 3]));
 
+    sl.insertBack(0, 1);
+    sl.insertBack([-1, -2]);
+    assert(equal(sl, [8, 7, 4, 5, 6, 2, 3, 0, 1, -1, -2]));
+
     // Cannot modify immutable values
     static assert(!__traits(compiles, sl.front = 9));
 
     assert(canFind(sl, 2));
-    assert(!canFind(sl, -1));
+    assert(!canFind(sl, -10));
 }
 
 @trusted unittest
@@ -464,24 +509,32 @@ version (unittest) private @trusted void testCopyAndRef()
 {
     import std.algorithm.comparison : equal;
 
-    auto sl = SList!int(1, 2, 3);
-    auto sl2 = SList!int(sl);
-    assert(equal(sl, sl2));
+    auto slFromList = SList!int(1, 2, 3);
+    auto slFromRange = SList!int(slFromList);
+    assert(equal(slFromList, slFromRange));
 
-    sl.popFront();
-    assert(equal(sl, [2, 3]));
-    assert(equal(sl2, [1, 2, 3]));
+    slFromList.popFront();
+    assert(equal(slFromList, [2, 3]));
+    assert(equal(slFromRange, [1, 2, 3]));
 
-    SList!int sl3;
-    sl3.insert(sl);
-    sl.popFront();
-    assert(equal(sl, [3]));
-    assert(equal(sl3, [2, 3]));
+    SList!int slInsFromRange;
+    slInsFromRange.insert(slFromList);
+    slFromList.popFront();
+    assert(equal(slFromList, [3]));
+    assert(equal(slInsFromRange, [2, 3]));
 
-    auto sl4 = sl3;
-    assert(sl3.front == 2);
-    sl4.front = 5;
-    assert(sl3.front == 5);
+    SList!int slInsBackFromRange;
+    slInsBackFromRange.insert(slFromList);
+    slFromList.popFront();
+    assert(slFromList.empty);
+    assert(equal(slInsBackFromRange, [3]));
+
+    auto slFromRef = slInsFromRange;
+    auto slFromDup = slInsFromRange.dup;
+    assert(slInsFromRange.front == 2);
+    slFromRef.front = 5;
+    assert(slInsFromRange.front == 5);
+    assert(slFromDup.front == 2);
 }
 
 @trusted unittest
