@@ -1,14 +1,13 @@
-import std.stdio;
-import std.algorithm.searching : canFind;
 import std.experimental.allocator : IAllocator, theAllocator, make, dispose;
 import std.experimental.allocator.building_blocks.affix_allocator;
 import std.experimental.allocator.gc_allocator;
 
+debug(CollectionSList) import std.stdio;
+
 version(unittest)
 {
     import std.experimental.allocator.mallocator;
-    import std.experimental.allocator.building_blocks.stats_collector,
-        std.stdio;
+    import std.experimental.allocator.building_blocks.stats_collector;
 
     private alias Alloc = StatsCollector!(
                         AffixAllocator!(Mallocator, uint),
@@ -46,10 +45,7 @@ private:
 
     Node *_head;
 
-    version (unittest)
-    {
-    }
-    else
+    version (unittest) { } else
     {
         alias Alloc = AffixAllocator!(GCAllocator, uint);
         alias _allocator = Alloc.instance;
@@ -146,6 +142,47 @@ public:
             debug(CollectionSList) writefln("SList.postblit: Node %s has refcount: %s",
                     _head._payload, *pref);
         }
+    }
+
+    // Immutable ctors
+    this(U)(U[] values...) immutable
+    if (isImplicitlyConvertible!(U, T))
+    {
+        this(theAllocator, values);
+    }
+
+    this(U)(Allocator allocator, U[] values...) immutable
+    if (isImplicitlyConvertible!(U, T))
+    {
+        debug(CollectionSList)
+        {
+            writefln("SList.ctor: begin");
+            scope(exit) writefln("SList.ctor: end");
+        }
+        //_allocator = allocator;
+        insert(values);
+    }
+
+    this(Stuff)(Stuff stuff) immutable
+    if (isInputRange!Stuff
+        && isImplicitlyConvertible!(ElementType!Stuff, T)
+        && !is(Stuff == T[]))
+    {
+        this(theAllocator, stuff);
+    }
+
+    this(Stuff)(Allocator allocator, Stuff stuff) immutable
+    if (isInputRange!Stuff
+        && isImplicitlyConvertible!(ElementType!Stuff, T)
+        && !is(Stuff == T[]))
+    {
+        debug(CollectionSList)
+        {
+            writefln("SList.ctor: begin");
+            scope(exit) writefln("SList.ctor: end");
+        }
+        //_allocator = allocator;
+        insert(stuff);
     }
 
     ~this()
@@ -394,6 +431,12 @@ public:
     }
 }
 
+@trusted unittest
+{
+    auto s = immutable SList!int();
+    auto s2 = immutable SList!(int, IAllocator)(theAllocator, 1);
+}
+
 version (unittest) private @trusted void testConcatAndAppend()
 {
     import std.algorithm.comparison : equal;
@@ -413,8 +456,6 @@ version (unittest) private @trusted void testConcatAndAppend()
     sl3 ~= 10;
     assert(equal(sl3, [1, 2, 3, 4, 10]));
     assert(equal(sl4, [1, 2, 3, 4, 10]));
-
-    writefln("sl is %s: ", sl3);
 
     sl3 ~= sl3;
     assert(equal(sl3, [1, 2, 3, 4, 10, 1, 2, 3, 4, 10]));
@@ -545,76 +586,4 @@ version (unittest) private @trusted void testCopyAndRef()
 
 void main(string[] args)
 {
-    //debug(CollectionSList) writefln("Begining of main\n");
-
-    //auto sl = SList!(int)();
-    //sl.insert(10);
-    ////if (sl !is null)
-        ////writeln(sl.empty());
-    //debug(CollectionSList)
-    //{
-        //writeln("After insert");
-        //sl.printRefCount();
-    //}
-
-    //sl.insert(11, 21, 31, 41, 51);
-    //debug(CollectionSList)
-    //{
-        //writeln("After insert");
-        //sl.printRefCount();
-    //}
-
-    //sl.insert([12, 22, 32, 42, 52]);
-    //debug(CollectionSList)
-    //{
-        //writeln("After insert");
-        //sl.printRefCount();
-    //}
-
-    //int i;
-    //auto sl2 = sl;
-    ////auto sl3 = sl;
-    //debug(CollectionSList)
-    //{
-        //writeln("After sl2");
-        //sl.printRefCount();
-    //}
-
-    //while (!sl.empty())
-    //{
-        //writefln("Elem %s: %s", ++i, sl.front);
-        //sl.popFront;
-        //debug(CollectionSList) sl.printRefCount();
-    //}
-
-    //debug(CollectionSList)
-    //{
-        //writeln();
-        //sl2.printRefCount();
-    //}
-
-    //auto sl3 = sl2;
-    //int needle = 10;
-    //debug(CollectionSList)
-    //{
-        //writeln("\nBefore find");
-        //writefln("Can find %s in list? A: %s\n", needle, canFind(sl3, needle));
-        //writeln("After find\n");
-    //}
-    //else
-    //{
-        //assert(canFind(sl3, needle));
-    //}
-
-    //debug(CollectionSList) writefln("Removing Node with value: %s\n", sl2.front);
-    ////sl2.remove();
-    //sl2.popFront();
-    //i = 0;
-    //while (!sl2.empty())
-    //{
-        //debug(CollectionSList) writefln("Elem %s: %s", ++i, sl2.front);
-        //sl2.popFront;
-    //}
-
-    //debug(CollectionSList) writefln("\nLeaving main");
 }
