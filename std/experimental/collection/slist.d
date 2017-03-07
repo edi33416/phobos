@@ -1,8 +1,17 @@
 import std.experimental.allocator : IAllocator, theAllocator, make, dispose;
 import std.experimental.allocator.building_blocks.affix_allocator;
 import std.experimental.allocator.gc_allocator;
+import std.range: isInputRange;
 
 debug(CollectionSList) import std.stdio;
+
+
+auto tail(Collection)(Collection collection)
+    if (isInputRange!Collection)
+{
+    collection.popFront();
+    return collection;
+}
 
 version(unittest)
 {
@@ -64,6 +73,30 @@ private:
         ++*prefCount(node);
     }
 
+    @trusted void addRef(immutable Node *node) immutable
+    {
+        assert(node !is null);
+        debug(CollectionSList)
+        {
+            uint *pref = prefCount(node);
+            writefln("SList.addRef: Node %s has refcount: %s; will be: %s",
+                    node._payload, *pref, *pref + 1);
+        }
+        ++*prefCount(node);
+    }
+
+    @trusted void addRef(const Node *node) const
+    {
+        assert(node !is null);
+        debug(CollectionSList)
+        {
+            uint *pref = prefCount(node);
+            writefln("SList.addRef: Node %s has refcount: %s; will be: %s",
+                    node._payload, *pref, *pref + 1);
+        }
+        ++*prefCount(node);
+    }
+
     @trusted void delRef(Node *node)
     {
         assert(node !is null);
@@ -81,20 +114,26 @@ private:
         }
     }
 
-    @trusted uint* prefCount(Node *node) const
+    @trusted uint* prefCount(const Node *node) const
     {
         assert(node !is null);
         return cast(uint*)(&_allocator.parent.prefix(cast(void[Node.sizeof])(*node)));
     }
 
+    //@trusted uint* prefCount(immutable Node *node) immutable
+    //{
+        //assert(node !is null);
+        //return cast(uint*)(&_allocator.parent.prefix(cast(void[Node.sizeof])(*node)));
+    //}
+
 public:
-    this(U)(U[] values...)
+    this(U, this Qualified)(U[] values...)
     if (isImplicitlyConvertible!(U, T))
     {
         this(theAllocator, values);
     }
 
-    this(U)(Allocator allocator, U[] values...)
+    this(U, this Qualified)(Allocator allocator, U[] values...)
     if (isImplicitlyConvertible!(U, T))
     {
         debug(CollectionSList)
@@ -103,10 +142,25 @@ public:
             scope(exit) writefln("SList.ctor: end");
         }
         //_allocator = allocator;
-        insert(values);
+        static if (is(Qualified == immutable) || is(Qualified == const))
+        {
+            Node *tmpNode;
+            Node *tmpHead;
+            foreach (item; values)
+            {
+                Node *newNode = _allocator.make!(Node)(item, null);
+                (tmpHead ? tmpNode._next : tmpHead) = newNode;
+                tmpNode = newNode;
+            }
+            _head = cast(immutable Node*)(tmpHead);
+        }
+        else
+        {
+            insert(values);
+        }
     }
 
-    this(Stuff)(Stuff stuff)
+    this(Stuff, this Qualified)(Stuff stuff)
     if (isInputRange!Stuff
         && isImplicitlyConvertible!(ElementType!Stuff, T)
         && !is(Stuff == T[]))
@@ -114,7 +168,7 @@ public:
         this(theAllocator, stuff);
     }
 
-    this(Stuff)(Allocator allocator, Stuff stuff)
+    this(Stuff, this Qualified)(Allocator allocator, Stuff stuff)
     if (isInputRange!Stuff
         && isImplicitlyConvertible!(ElementType!Stuff, T)
         && !is(Stuff == T[]))
@@ -125,7 +179,23 @@ public:
             scope(exit) writefln("SList.ctor: end");
         }
         //_allocator = allocator;
-        insert(stuff);
+
+        static if (is(Qualified == immutable) || is(Qualified == const))
+        {
+            Node *tmpNode;
+            Node *tmpHead;
+            foreach (item; stuff)
+            {
+                Node *newNode = _allocator.make!(Node)(item, null);
+                (tmpHead ? tmpNode._next : tmpHead) = newNode;
+                tmpNode = newNode;
+            }
+            _head = cast(immutable Node*)(tmpHead);
+        }
+        else
+        {
+            insert(stuff);
+        }
     }
 
     this(this)
@@ -145,44 +215,28 @@ public:
     }
 
     // Immutable ctors
-    this(U)(U[] values...) immutable
-    if (isImplicitlyConvertible!(U, T))
+    private this(immutable Node *_newHead) immutable
     {
-        this(theAllocator, values);
-    }
-
-    this(U)(Allocator allocator, U[] values...) immutable
-    if (isImplicitlyConvertible!(U, T))
-    {
-        debug(CollectionSList)
+        _head = _newHead;
+        if (_head !is null)
         {
-            writefln("SList.ctor: begin");
-            scope(exit) writefln("SList.ctor: end");
+            uint *pref = prefCount(_head);
+            addRef(_head);
+            debug(CollectionSList) writefln("SList.ctor immutable: Node %s has "
+                    ~ "refcount: %s", _head._payload, *pref);
         }
-        //_allocator = allocator;
-        insert(values);
     }
 
-    this(Stuff)(Stuff stuff) immutable
-    if (isInputRange!Stuff
-        && isImplicitlyConvertible!(ElementType!Stuff, T)
-        && !is(Stuff == T[]))
+    private this(const Node *_newHead) const
     {
-        this(theAllocator, stuff);
-    }
-
-    this(Stuff)(Allocator allocator, Stuff stuff) immutable
-    if (isInputRange!Stuff
-        && isImplicitlyConvertible!(ElementType!Stuff, T)
-        && !is(Stuff == T[]))
-    {
-        debug(CollectionSList)
+        _head = _newHead;
+        if (_head !is null)
         {
-            writefln("SList.ctor: begin");
-            scope(exit) writefln("SList.ctor: end");
+            uint *pref = prefCount(_head);
+            addRef(_head);
+            debug(CollectionSList) writefln("SList.ctor immutable: Node %s has "
+                    ~ "refcount: %s", _head._payload, *pref);
         }
-        //_allocator = allocator;
-        insert(stuff);
     }
 
     ~this()
@@ -223,12 +277,12 @@ public:
         }
     }
 
-    bool empty()
+    bool empty(this _)()
     {
         return _head is null;
     }
 
-    ref T front()
+    ref auto front(this _)()
     {
         assert(!empty, "SList.front: List is empty");
         return _head._payload;
@@ -255,7 +309,26 @@ public:
         delRef(tmpNode);
     }
 
-    typeof(this) save()
+    Qualified tail(this Qualified)()
+    {
+        debug(CollectionSList)
+        {
+            writefln("SList.popFront: begin");
+            scope(exit) writefln("SList.popFront: end");
+        }
+        assert(!empty, "SList.popFront: List is empty");
+
+        static if (is(Qualified == immutable) || is(Qualified == const))
+        {
+            return typeof(this)(_head._next);
+        }
+        else
+        {
+            return .tail(this);
+        }
+    }
+
+    ref Qualified save(this Qualified)()
     {
         debug(CollectionSList)
         {
@@ -431,10 +504,41 @@ public:
     }
 }
 
+version (unittest) private @trusted void testImmutability()
+{
+    auto s = immutable SList!(int)(1, 2, 3);
+    auto s2 = s;
+    auto s3 = s2.save();
+
+    assert(s2.front == 1);
+    static assert(!__traits(compiles, s2.front = 4));
+    static assert(!__traits(compiles, s2.popFront()));
+
+    auto s4 = s2.tail;
+    assert(s4.front == 2);
+    static assert(!__traits(compiles, s4 = s4.tail));
+}
+
+version (unittest) private @trusted void testConstness()
+{
+    auto s = const SList!(int)(1, 2, 3);
+    auto s2 = s;
+    auto s3 = s2.save();
+
+    assert(s2.front == 1);
+    static assert(!__traits(compiles, s2.front = 4));
+    static assert(!__traits(compiles, s2.popFront()));
+
+    auto s4 = s2.tail;
+    assert(s4.front == 2);
+    static assert(!__traits(compiles, s4 = s4.tail));
+}
+
 @trusted unittest
 {
-    auto s = immutable SList!int();
-    auto s2 = immutable SList!(int, IAllocator)(theAllocator, 1);
+    testImmutability();
+    testConstness();
+    assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
 }
 
 version (unittest) private @trusted void testConcatAndAppend()
