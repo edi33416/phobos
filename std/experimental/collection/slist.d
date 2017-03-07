@@ -601,6 +601,12 @@ version (unittest) private @trusted void testSimple()
     sl.front = 9;
     assert(equal(sl, [9, 7, 4, 5, 6, 2, 3, 0, 1, -1, -2]));
 
+    auto slTail = sl.tail;
+    assert(slTail.front == 7);
+    slTail.front = 8;
+    assert(slTail.front == 8);
+    assert(sl.tail.front == 8);
+
     assert(canFind(sl, 2));
     assert(!canFind(sl, -10));
 }
@@ -627,6 +633,7 @@ version (unittest) private @trusted void testSimpleImmutable()
     sl.popFront();
     assert(sl.front == 2);
     assert(equal(sl, [2, 3]));
+    assert(sl.tail.front == 3);
 
     sl.insert([4, 5, 6]);
     sl.insert(7);
