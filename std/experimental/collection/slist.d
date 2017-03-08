@@ -431,7 +431,11 @@ public:
     }
 
     auto ref opBinary(string op, U)(auto ref U rhs)
-        if (op == "~" && (is (U == typeof(this)) || is (U : T)))
+        if (op == "~" &&
+            (is (U == typeof(this))
+             || is (U : T)
+             || (isInputRange!U && isImplicitlyConvertible!(ElementType!U, T))
+            ))
     {
         debug(CollectionSList)
         {
@@ -471,7 +475,11 @@ public:
     }
 
     auto ref opOpAssign(string op, U)(auto ref U rhs)
-        if (op == "~" && (is (U == typeof(this)) || is (U : T)))
+        if (op == "~" &&
+            (is (U == typeof(this))
+             || is (U : T)
+             || (isInputRange!U && isImplicitlyConvertible!(ElementType!U, T))
+            ))
     {
         debug(CollectionSList)
         {
@@ -554,16 +562,20 @@ version (unittest) private @trusted void testConcatAndAppend()
     auto sl4 = sl3;
     sl3 = sl3 ~ 4;
     assert(equal(sl3, [1, 2, 3, 4]));
+    sl3 = sl3 ~ [5];
+    assert(equal(sl3, [1, 2, 3, 4, 5]));
     assert(equal(sl4, [1, 2, 3]));
 
     sl4 = sl3;
-    sl3 ~= 10;
-    assert(equal(sl3, [1, 2, 3, 4, 10]));
-    assert(equal(sl4, [1, 2, 3, 4, 10]));
+    sl3 ~= 6;
+    assert(equal(sl3, [1, 2, 3, 4, 5, 6]));
+    sl3 ~= [7];
+    assert(equal(sl3, [1, 2, 3, 4, 5, 6, 7]));
+    assert(equal(sl4, [1, 2, 3, 4, 5, 6, 7]));
 
     sl3 ~= sl3;
-    assert(equal(sl3, [1, 2, 3, 4, 10, 1, 2, 3, 4, 10]));
-    assert(equal(sl4, [1, 2, 3, 4, 10, 1, 2, 3, 4, 10]));
+    assert(equal(sl3, [1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7]));
+    assert(equal(sl4, [1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7]));
 }
 
 @trusted unittest
