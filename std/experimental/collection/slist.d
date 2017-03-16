@@ -110,6 +110,20 @@ private:
         }
     }
 
+    static string immutableInsert(string stuff)
+    {
+        return ""
+            ~"Node *tmpNode;"
+            ~"Node *tmpHead;"
+            ~"foreach (item; " ~ stuff ~ ")"
+            ~"{"
+                ~"Node *newNode = _allocator.make!(Node)(item, null);"
+                ~"(tmpHead ? tmpNode._next : tmpHead) = newNode;"
+                ~"tmpNode = newNode;"
+            ~"}"
+            ~"_head = cast(immutable Node*)(tmpHead);";
+    }
+
 public:
     this(U, this Qualified)(U[] values...)
     if (isImplicitlyConvertible!(U, T))
@@ -128,15 +142,7 @@ public:
         //_allocator = allocator;
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
-            Node *tmpNode;
-            Node *tmpHead;
-            foreach (item; values)
-            {
-                Node *newNode = _allocator.make!(Node)(item, null);
-                (tmpHead ? tmpNode._next : tmpHead) = newNode;
-                tmpNode = newNode;
-            }
-            _head = cast(immutable Node*)(tmpHead);
+            mixin(immutableInsert("values"));
         }
         else
         {
@@ -166,15 +172,7 @@ public:
 
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
-            Node *tmpNode;
-            Node *tmpHead;
-            foreach (item; stuff)
-            {
-                Node *newNode = _allocator.make!(Node)(item, null);
-                (tmpHead ? tmpNode._next : tmpHead) = newNode;
-                tmpNode = newNode;
-            }
-            _head = cast(immutable Node*)(tmpHead);
+            mixin(immutableInsert("stuff"));
         }
         else
         {
