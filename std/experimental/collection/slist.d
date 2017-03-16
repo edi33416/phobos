@@ -197,19 +197,8 @@ public:
     }
 
     // Immutable ctors
-    private this(immutable Node *_newHead) immutable
-    {
-        _head = _newHead;
-        if (_head !is null)
-        {
-            shared uint *pref = prefCount(_head);
-            addRef(_head);
-            debug(CollectionSList) writefln("SList.ctor immutable: Node %s has "
-                    ~ "refcount: %s", _head._payload, *pref);
-        }
-    }
-
-    private this(const Node *_newHead) const
+    private this(NodeQual, this Qualified)(NodeQual _newHead)
+        if (is(Qualified == immutable) || is(Qualified == const))
     {
         _head = _newHead;
         if (_head !is null)
