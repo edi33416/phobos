@@ -2,6 +2,7 @@ import std.experimental.allocator : IAllocator, theAllocator, make, dispose;
 import std.experimental.allocator.building_blocks.affix_allocator;
 import std.experimental.allocator.gc_allocator;
 import std.range: isInputRange;
+import core.atomic : atomicOp;
 
 debug(CollectionSList) import std.stdio;
 
@@ -66,23 +67,25 @@ private:
         assert(node !is null);
         debug(CollectionSList)
         {
-            uint *pref = prefCount(node);
+            static if (is(Qualified == immutable) || is(Qualified == const))
+            {
+                shared uint *pref = prefCount(node);
+            }
+            else
+            {
+                uint *pref = prefCount(node);
+            }
             writefln("SList.addRef: Node %s has refcount: %s; will be: %s",
                     node._payload, *pref, *pref + 1);
         }
-        ++*prefCount(node);
-    }
-
-    @trusted void addRef(immutable Node *node) immutable
-    {
-        assert(node !is null);
-        debug(CollectionSList)
+        static if (is(Qualified == immutable) || is(Qualified == const))
         {
-            uint *pref = prefCount(node);
-            writefln("SList.addRef: Node %s has refcount: %s; will be: %s",
-                    node._payload, *pref, *pref + 1);
+            atomicOp!"+="(*prefCount(node), 1);
         }
-        ++*prefCount(node);
+        else
+        {
+            ++*prefCount(node);
+        }
     }
 
     @trusted void addRef(const Node *node) const
@@ -90,11 +93,11 @@ private:
         assert(node !is null);
         debug(CollectionSList)
         {
-            uint *pref = prefCount(node);
+            shared uint *pref = prefCount(node);
             writefln("SList.addRef: Node %s has refcount: %s; will be: %s",
                     node._payload, *pref, *pref + 1);
         }
-        ++*prefCount(node);
+        atomicOp!"+="(*prefCount(node), 1);
     }
 
     @trusted void delRef(Node *node)
@@ -114,17 +117,17 @@ private:
         }
     }
 
-    @trusted uint* prefCount(const Node *node) const
+    @trusted uint* prefCount(Node *node)
     {
         assert(node !is null);
         return cast(uint*)(&_allocator.parent.prefix(cast(void[Node.sizeof])(*node)));
     }
 
-    //@trusted uint* prefCount(immutable Node *node) immutable
-    //{
-        //assert(node !is null);
-        //return cast(uint*)(&_allocator.parent.prefix(cast(void[Node.sizeof])(*node)));
-    //}
+    @trusted shared(uint*) prefCount(const Node *node) const
+    {
+        assert(node !is null);
+        return cast(shared uint*)(&_allocator.parent.prefix(cast(void[Node.sizeof])(*node)));
+    }
 
 public:
     this(U, this Qualified)(U[] values...)
@@ -220,7 +223,7 @@ public:
         _head = _newHead;
         if (_head !is null)
         {
-            uint *pref = prefCount(_head);
+            shared uint *pref = prefCount(_head);
             addRef(_head);
             debug(CollectionSList) writefln("SList.ctor immutable: Node %s has "
                     ~ "refcount: %s", _head._payload, *pref);
@@ -232,7 +235,7 @@ public:
         _head = _newHead;
         if (_head !is null)
         {
-            uint *pref = prefCount(_head);
+            shared uint *pref = prefCount(_head);
             addRef(_head);
             debug(CollectionSList) writefln("SList.ctor immutable: Node %s has "
                     ~ "refcount: %s", _head._payload, *pref);
