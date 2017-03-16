@@ -62,21 +62,13 @@ private:
         //Alloc _allocator;
     }
 
-    @trusted void addRef(Node *node)
+    @trusted void addRef(QualNode, this Qualified)(QualNode node)
     {
         assert(node !is null);
         debug(CollectionSList)
         {
-            static if (is(Qualified == immutable) || is(Qualified == const))
-            {
-                shared uint *pref = prefCount(node);
-            }
-            else
-            {
-                uint *pref = prefCount(node);
-            }
             writefln("SList.addRef: Node %s has refcount: %s; will be: %s",
-                    node._payload, *pref, *pref + 1);
+                    node._payload, *prefCount(node), *prefCount(node) + 1);
         }
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
@@ -86,18 +78,6 @@ private:
         {
             ++*prefCount(node);
         }
-    }
-
-    @trusted void addRef(const Node *node) const
-    {
-        assert(node !is null);
-        debug(CollectionSList)
-        {
-            shared uint *pref = prefCount(node);
-            writefln("SList.addRef: Node %s has refcount: %s; will be: %s",
-                    node._payload, *pref, *pref + 1);
-        }
-        atomicOp!"+="(*prefCount(node), 1);
     }
 
     @trusted void delRef(Node *node)
@@ -117,16 +97,17 @@ private:
         }
     }
 
-    @trusted uint* prefCount(Node *node)
+    @trusted auto prefCount(QualNode, this Qualified)(QualNode node)
     {
         assert(node !is null);
-        return cast(uint*)(&_allocator.parent.prefix(cast(void[Node.sizeof])(*node)));
-    }
-
-    @trusted shared(uint*) prefCount(const Node *node) const
-    {
-        assert(node !is null);
-        return cast(shared uint*)(&_allocator.parent.prefix(cast(void[Node.sizeof])(*node)));
+        static if (is(Qualified == immutable) || is(Qualified == const))
+        {
+            return cast(shared uint*)(&_allocator.parent.prefix(cast(void[Node.sizeof])(*node)));
+        }
+        else
+        {
+            return cast(uint*)(&_allocator.parent.prefix(cast(void[Node.sizeof])(*node)));
+        }
     }
 
 public:
