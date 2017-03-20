@@ -26,7 +26,7 @@ version(unittest)
     Alloc _allocator;
 }
 
-struct SList(T, Allocator = IAllocator)
+struct SList(T)
 {
     import std.traits : isImplicitlyConvertible;
     import std.range.primitives : isInputRange, isForwardRange, ElementType;
@@ -57,9 +57,8 @@ private:
 
     version (unittest) { } else
     {
-        alias Alloc = AffixAllocator!(GCAllocator, uint);
-        alias _allocator = Alloc.instance;
-        //Alloc _allocator;
+        alias Alloc = AffixAllocator!(IAllocator, size_t);
+        Alloc _allocator;
     }
 
     @trusted void addRef(QualNode, this Qualified)(QualNode node)
@@ -100,13 +99,20 @@ private:
     @trusted auto prefCount(QualNode, this Qualified)(QualNode node)
     {
         assert(node !is null);
+        version (unittest)
+        {
+            alias _alloc = _allocator.parent;
+        } else
+        {
+            alias _alloc = _allocator;
+        }
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
-            return cast(shared uint*)(&_allocator.parent.prefix(cast(void[Node.sizeof])(*node)));
+            return cast(shared uint*)(&_alloc.prefix(cast(void[Node.sizeof])(*node)));
         }
         else
         {
-            return cast(uint*)(&_allocator.parent.prefix(cast(void[Node.sizeof])(*node)));
+            return cast(uint*)(&_alloc.prefix(cast(void[Node.sizeof])(*node)));
         }
     }
 
@@ -131,7 +137,7 @@ public:
         this(theAllocator, values);
     }
 
-    this(U, this Qualified)(Allocator allocator, U[] values...)
+    this(U, this Qualified)(IAllocator allocator, U[] values...)
     if (isImplicitlyConvertible!(U, T))
     {
         debug(CollectionSList)
@@ -139,7 +145,10 @@ public:
             writefln("SList.ctor: begin");
             scope(exit) writefln("SList.ctor: end");
         }
-        //_allocator = allocator;
+        version (unittest) { } else
+        {
+            _allocator = AffixAllocator!(IAllocator, size_t)(allocator);
+        }
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
             mixin(immutableInsert("values"));
@@ -158,7 +167,7 @@ public:
         this(theAllocator, stuff);
     }
 
-    this(Stuff, this Qualified)(Allocator allocator, Stuff stuff)
+    this(Stuff, this Qualified)(IAllocator allocator, Stuff stuff)
     if (isInputRange!Stuff
         && isImplicitlyConvertible!(ElementType!Stuff, T)
         && !is(Stuff == T[]))
@@ -168,8 +177,10 @@ public:
             writefln("SList.ctor: begin");
             scope(exit) writefln("SList.ctor: end");
         }
-        //_allocator = allocator;
-
+        version (unittest) { } else
+        {
+            _allocator = AffixAllocator!(IAllocator, size_t)(allocator);
+        }
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
             mixin(immutableInsert("stuff"));
