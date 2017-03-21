@@ -338,7 +338,13 @@ public:
             writefln("SList.insert: begin");
             scope(exit) writefln("SList.insert: end");
         }
-        //if (_allocator is null) _allocator = theAllocator;
+        version (unittest) { } else
+        {
+            if (_allocator is null)
+            {
+                _allocator = AffixAllocator!(IAllocator, size_t)(theAllocator);
+            }
+        }
 
         size_t result;
         Node *tmpNode;
@@ -374,6 +380,13 @@ public:
         {
             writefln("SList.insertBack: begin");
             scope(exit) writefln("SList.insertBack: end");
+        }
+        version (unittest) { } else
+        {
+            if (_allocator is null)
+            {
+                _allocator = AffixAllocator!(IAllocator, size_t)(theAllocator);
+            }
         }
 
         size_t result;
@@ -558,6 +571,10 @@ version (unittest) private @trusted void testConcatAndAppend()
     sl3 ~= sl3;
     assert(equal(sl3, [1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7]));
     assert(equal(sl4, [1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7]));
+
+    SList!int sl5;
+    sl5 ~= [1, 2, 3];
+    assert(equal(sl5, [1, 2, 3]));
 }
 
 @trusted unittest
