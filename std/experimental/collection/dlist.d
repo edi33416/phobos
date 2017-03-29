@@ -225,8 +225,11 @@ public:
             scope(exit) writefln("DList.dtor: End for instance %s of type %s",
                     cast(size_t)(&this), typeof(this).stringof);
         }
-        delRef(_head);
-        destroyUnused(_head);
+        if (_head !is null)
+        {
+            delRef(_head);
+            destroyUnused(_head);
+        }
     }
 
     void destroyUnused(Node *startNode)
@@ -329,12 +332,14 @@ public:
         assert(!empty, "DList.popFront: List is empty");
         Node *tmpNode = _head;
         _head = _head._next;
-        if (_head !is null) {
+        if (_head !is null)
+        {
             addRef(_head);
             delRef(tmpNode);
         }
         else
         {
+            delRef(tmpNode);
             destroyUnused(tmpNode);
         }
     }
@@ -355,6 +360,7 @@ public:
         }
         else
         {
+            delRef(tmpNode);
             destroyUnused(tmpNode);
         }
     }
@@ -473,48 +479,61 @@ version (unittest) private @trusted void testSimpleInit()
     DList!int dl = DList!int(1, 2, 3);
     dl.popFront();
     dl.popPrev();
-    dl.printRefCount();
+    //dl.printRefCount();
 }
 
 version (unittest) private @trusted void testCopyAndRef()
 {
     import std.algorithm.comparison : equal;
 
-    auto slFromList = DList!int(1, 2, 3);
-    auto slFromRange = DList!int(slFromList);
-    assert(equal(slFromList, slFromRange));
+    auto dlFromList = DList!int(1, 2, 3);
+    auto dlFromRange = DList!int(dlFromList);
+    assert(equal(dlFromList, dlFromRange));
 
-    slFromList.popFront();
-    assert(equal(slFromList, [2, 3]));
-    assert(equal(slFromRange, [1, 2, 3]));
+    dlFromList.popFront();
+    assert(equal(dlFromList, [2, 3]));
+    assert(equal(dlFromRange, [1, 2, 3]));
 
-    DList!int slInsFromRange;
-    slInsFromRange.insert(slFromList);
-    slFromList.popFront();
-    assert(equal(slFromList, [3]));
-    assert(equal(slInsFromRange, [2, 3]));
+    DList!int dlInsFromRange;
+    dlInsFromRange.insert(dlFromList);
+    dlFromList.popFront();
+    assert(equal(dlFromList, [3]));
+    assert(equal(dlInsFromRange, [2, 3]));
 
-    DList!int slInsBackFromRange;
-    slInsBackFromRange.insert(slFromList);
-    slFromList.popFront();
-    assert(slFromList.empty);
-    assert(equal(slInsBackFromRange, [3]));
+    DList!int dlInsBackFromRange;
+    dlInsBackFromRange.insert(dlFromList);
+    dlFromList.popFront();
+    assert(dlFromList.empty);
+    assert(equal(dlInsBackFromRange, [3]));
 
-    auto slFromRef = slInsFromRange;
-    auto slFromDup = slInsFromRange.dup;
-    assert(slInsFromRange.front == 2);
-    slFromRef.front = 5;
-    assert(slInsFromRange.front == 5);
-    assert(slFromDup.front == 2);
+    auto dlFromRef = dlInsFromRange;
+    auto dlFromDup = dlInsFromRange.dup;
+    assert(dlInsFromRange.front == 2);
+    dlFromRef.front = 5;
+    assert(dlInsFromRange.front == 5);
+    assert(dlFromDup.front == 2);
 }
 
 @trusted unittest
 {
     import std.conv;
-    //testCopyAndRef();
+    testCopyAndRef();
     testSimpleInit();
     assert(_allocator.bytesUsed == 0, "DList ref count leaks memory; leaked "
                                     ~ to!string(_allocator.bytesUsed) ~ " bytes");
+}
+
+@trusted unittest
+{
+    DList!int dl = DList!int(1, 2, 3);
+
+    auto before = _allocator.bytesUsed;
+    {
+        DList!int dl2 = dl;
+        dl2.popFront();
+        dl.printRefCount();
+    }
+    assert(before == _allocator.bytesUsed);
 }
 
 void main(string[] args)
