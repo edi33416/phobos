@@ -55,7 +55,7 @@ private:
 
     Node *_head;
 
-    version (unittest) { } else
+    version(unittest) { } else
     {
         alias Alloc = AffixAllocator!(IAllocator, size_t);
         Alloc _allocator;
@@ -99,7 +99,7 @@ private:
     @trusted auto prefCount(QualNode, this Qualified)(QualNode node)
     {
         assert(node !is null);
-        version (unittest)
+        version(unittest)
         {
             alias _alloc = _allocator.parent;
         } else
@@ -123,11 +123,12 @@ private:
             ~"Node *tmpHead;"
             ~"foreach (item; " ~ stuff ~ ")"
             ~"{"
-                ~"Node *newNode = _allocator.make!(Node)(item, null);"
+                ~"Node *newNode;"
+                ~"() @trusted { newNode = _allocator.make!(Node)(item, null); }();"
                 ~"(tmpHead ? tmpNode._next : tmpHead) = newNode;"
                 ~"tmpNode = newNode;"
             ~"}"
-            ~"_head = cast(immutable Node*)(tmpHead);";
+            ~"_head = () @trusted { return cast(immutable Node*)(tmpHead); }();";
     }
 
 public:
@@ -145,7 +146,7 @@ public:
             writefln("SList.ctor: begin");
             scope(exit) writefln("SList.ctor: end");
         }
-        version (unittest) { } else
+        version(unittest) { } else
         {
             _allocator = AffixAllocator!(IAllocator, size_t)(allocator);
         }
@@ -177,7 +178,7 @@ public:
             writefln("SList.ctor: begin");
             scope(exit) writefln("SList.ctor: end");
         }
-        version (unittest) { } else
+        version(unittest) { } else
         {
             _allocator = AffixAllocator!(IAllocator, size_t)(allocator);
         }
@@ -221,7 +222,7 @@ public:
         }
     }
 
-    ~this()
+    @trusted ~this()
     {
         debug(CollectionSList)
         {
@@ -338,9 +339,9 @@ public:
             writefln("SList.insert: begin");
             scope(exit) writefln("SList.insert: end");
         }
-        version (unittest) { } else
+        version(unittest) { } else
         {
-            if (_allocator is null)
+            if (() @trusted { return _allocator.parent is null; }())
             {
                 _allocator = AffixAllocator!(IAllocator, size_t)(theAllocator);
             }
@@ -351,7 +352,8 @@ public:
         Node *tmpHead;
         foreach (item; stuff)
         {
-            Node *newNode = _allocator.make!(Node)(item, null);
+            Node *newNode;
+            () @trusted { newNode = _allocator.make!(Node)(item, null); }();
             (tmpHead ? tmpNode._next : tmpHead) = newNode;
             tmpNode = newNode;
             ++result;
@@ -381,9 +383,9 @@ public:
             writefln("SList.insertBack: begin");
             scope(exit) writefln("SList.insertBack: end");
         }
-        version (unittest) { } else
+        version(unittest) { } else
         {
-            if (_allocator is null)
+            if (() @trusted { return _allocator.parent is null; }())
             {
                 _allocator = AffixAllocator!(IAllocator, size_t)(theAllocator);
             }
@@ -394,7 +396,8 @@ public:
         Node *tmpHead;
         foreach (item; stuff)
         {
-            Node *newNode = _allocator.make!(Node)(item, null);
+            Node *newNode;
+            () @trusted { newNode = _allocator.make!(Node)(item, null); }();
             (tmpHead ? tmpNode._next : tmpHead) = newNode;
             tmpNode = newNode;
             ++result;
@@ -507,7 +510,7 @@ public:
     }
 }
 
-version (unittest) private @trusted void testImmutability()
+version(unittest) private @safe void testImmutability()
 {
     auto s = immutable SList!(int)(1, 2, 3);
     auto s2 = s;
@@ -522,7 +525,7 @@ version (unittest) private @trusted void testImmutability()
     static assert(!__traits(compiles, s4 = s4.tail));
 }
 
-version (unittest) private @trusted void testConstness()
+version(unittest) private @safe void testConstness()
 {
     auto s = const SList!(int)(1, 2, 3);
     auto s2 = s;
@@ -537,14 +540,14 @@ version (unittest) private @trusted void testConstness()
     static assert(!__traits(compiles, s4 = s4.tail));
 }
 
-@trusted unittest
+@safe unittest
 {
     testImmutability();
     testConstness();
     assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
 }
 
-version (unittest) private @trusted void testConcatAndAppend()
+version(unittest) private @safe void testConcatAndAppend()
 {
     import std.algorithm.comparison : equal;
 
@@ -577,13 +580,13 @@ version (unittest) private @trusted void testConcatAndAppend()
     assert(equal(sl5, [1, 2, 3]));
 }
 
-@trusted unittest
+@safe unittest
 {
     testConcatAndAppend();
     assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
 }
 
-version (unittest) private @trusted void testSimple()
+version(unittest) private @safe void testSimple()
 {
     import std.algorithm.comparison : equal;
     import std.algorithm.searching : canFind;
@@ -622,13 +625,13 @@ version (unittest) private @trusted void testSimple()
     assert(!canFind(sl, -10));
 }
 
-@trusted unittest
+@safe unittest
 {
     testSimple();
     assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
 }
 
-version (unittest) private @trusted void testSimpleImmutable()
+version(unittest) private @safe void testSimpleImmutable()
 {
     import std.algorithm.comparison : equal;
     import std.algorithm.searching : canFind;
@@ -662,13 +665,13 @@ version (unittest) private @trusted void testSimpleImmutable()
     assert(!canFind(sl, -10));
 }
 
-@trusted unittest
+@safe unittest
 {
     testSimpleImmutable();
     assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
 }
 
-version (unittest) private @trusted void testCopyAndRef()
+version(unittest) private @safe void testCopyAndRef()
 {
     import std.algorithm.comparison : equal;
 
@@ -700,7 +703,7 @@ version (unittest) private @trusted void testCopyAndRef()
     assert(slFromDup.front == 2);
 }
 
-@trusted unittest
+@safe unittest
 {
     testCopyAndRef();
     assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
