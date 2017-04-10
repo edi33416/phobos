@@ -53,7 +53,6 @@ private:
     {
         alias Alloc = AffixAllocator!(IAllocator, size_t);
         Alloc _allocator;
-        //Alloc _allocator;
     }
 
     @trusted void addRef(QualNode, this Qualified)(QualNode node)
@@ -230,7 +229,12 @@ public:
         if (_head !is null)
         {
             delRef(_head);
-            destroyUnused(_head);
+            if (_head !is null
+                && ((_head._prev !is null) || (_head._next !is null)))
+            {
+                //If it was a single node list, delRef will suffice
+                destroyUnused(_head);
+            }
         }
     }
 
@@ -334,7 +338,13 @@ public:
         else
         {
             delRef(tmpNode);
-            destroyUnused(tmpNode);
+            if (tmpNode !is null
+                && ((tmpNode._prev !is null) || (tmpNode._next !is null)))
+            {
+                // If it was a single node list, only delRef must be used
+                // in order to avoid premature/double freeing
+                destroyUnused(tmpNode);
+            }
         }
     }
 
@@ -355,7 +365,13 @@ public:
         else
         {
             delRef(tmpNode);
-            destroyUnused(tmpNode);
+            if (tmpNode !is null
+                && ((tmpNode._prev !is null) || (tmpNode._next !is null)))
+            {
+                // If it was a single node list, only delRef must be used
+                // in order to avoid premature/double freeing
+                destroyUnused(tmpNode);
+            }
         }
     }
 
@@ -453,22 +469,39 @@ public:
     {
         debug(CollectionDList)
         {
-            writefln("SDist.remove: begin");
-            scope(exit) writefln("SDist.remove: end");
+            writefln("DList.remove: begin");
+            scope(exit) writefln("DList.remove: end");
         }
-        assert(!empty, "SDist.remove: List is empty");
+        assert(!empty, "DList.remove: List is empty");
 
         Node *tmpNode = _head;
         _head = _head._next;
-        _head._prev = tmpNode._prev;
-        if (*prefCount(tmpNode) > 0 &&  _head !is null)
+        if (_head !is null)
         {
-            // If we have another copy of the list then the refcount
-            // must increase, otherwise it will remain the same
-            // This condition is needed because the recounting is zero based
-            addRef(_head);
+            //addRef(_head);
+            _head._prev = tmpNode._prev;
+            delRef(tmpNode); // Remove tmpNode._next._prev ref
+            tmpNode._next = null;
+            //delRef(_head);
+            if (tmpNode._prev !is null)
+            {
+                addRef(_head);
+                tmpNode._prev._next = _head;
+                delRef(tmpNode); // Remove tmpNode._prev._next ref
+                tmpNode._prev = null;
+            }
         }
-        delRef(tmpNode);
+        else if (tmpNode._prev !is null)
+        {
+            _head = tmpNode._prev;
+            //addRef(_head);
+            tmpNode._prev = null;
+            //delRef(_head);
+            _head._next = null;
+            delRef(tmpNode);
+        }
+        delRef(tmpNode); // Remove old head ref
+        destroyUnused(tmpNode);
     }
 
     private void printRefCount(Node *sn = null)
@@ -546,10 +579,28 @@ version (unittest) private @trusted void testInsert()
     //dl.printRefCount();
 }
 
+version (unittest) private @trusted void testRemove()
+{
+    DList!int dl = DList!int(1);
+    dl.printRefCount();
+    dl.remove();
+    dl.printRefCount();
+    dl.insert(2);
+    dl.printRefCount();
+    auto dl2 = dl;
+    auto dl3 = dl;
+    dl.printRefCount();
+    dl.popFront();
+    dl2.printRefCount();
+    dl2.popPrev();
+    dl3.printRefCount();
+}
+
 @trusted unittest
 {
     import std.conv;
-    testInsert();
+    //testInsert();
+    testRemove();
     assert(_allocator.bytesUsed == 0, "DList ref count leaks memory; leaked "
                                     ~ to!string(_allocator.bytesUsed) ~ " bytes");
 }
