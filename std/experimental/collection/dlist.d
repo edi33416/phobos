@@ -1,3 +1,6 @@
+module std.experimental.collection.dlist;
+
+import std.experimental.collection.common;
 import std.experimental.allocator : IAllocator, theAllocator, make, dispose;
 import std.experimental.allocator.building_blocks.affix_allocator;
 import std.experimental.allocator.gc_allocator;
@@ -23,6 +26,7 @@ struct DList(T)
     import std.traits : isImplicitlyConvertible;
     import std.range.primitives : isInputRange, isForwardRange, ElementType;
     import std.conv : emplace;
+    import core.atomic : atomicOp;
 
 private:
     struct Node
@@ -120,8 +124,17 @@ private:
             ~"foreach (item; " ~ stuff ~ ")"
             ~"{"
                 ~"Node *newNode = _allocator.make!(Node)(item, null, null);"
-                ~"(tmpHead ? tmpNode._next : tmpHead) = newNode;"
-                ~"tmpNode = newNode;"
+                ~"if (tmpHead is null)"
+                ~"{"
+                    ~"tmpHead = tmpNode = newNode;"
+                ~"}"
+                ~"else"
+                ~"{"
+                    ~"tmpNode._next = newNode;"
+                    ~"newNode._prev = tmpNode;"
+                    ~"addRef(newNode._prev);"
+                    ~"tmpNode = newNode;"
+                ~"}"
             ~"}"
             ~"_head = cast(immutable Node*)(tmpHead);";
     }
@@ -232,7 +245,8 @@ public:
             if (_head !is null
                 && ((_head._prev !is null) || (_head._next !is null)))
             {
-                //If it was a single node list, delRef will suffice
+                // If it was a single node list, only delRef must be used
+                // in order to avoid premature/double freeing
                 destroyUnused(_head);
             }
         }
@@ -297,24 +311,24 @@ public:
             {
                 Node *oldNode = tmpNode;
                 tmpNode = tmpNode._next;
-                _allocator.dispose(oldNode);
+                () @trusted { _allocator.dispose(oldNode); }();
             }
             tmpNode = startNode;
             while (tmpNode !is null)
             {
                 Node *oldNode = tmpNode;
                 tmpNode = tmpNode._prev;
-                _allocator.dispose(oldNode);
+                () @trusted { _allocator.dispose(oldNode); }();
             }
         }
     }
 
-    bool empty()
+    bool empty(this _)()
     {
         return _head is null;
     }
 
-    ref T front()
+    ref auto front(this _)()
     {
         assert(!empty, "DList.front: List is empty");
         return _head._payload;
@@ -375,7 +389,26 @@ public:
         }
     }
 
-    typeof(this) save()
+    Qualified tail(this Qualified)()
+    {
+        debug(CollectionDList)
+        {
+            writefln("DList.popFront: begin");
+            scope(exit) writefln("DList.popFront: end");
+        }
+        assert(!empty, "DList.popFront: List is empty");
+
+        static if (is(Qualified == immutable) || is(Qualified == const))
+        {
+            return typeof(this)(_head._next);
+        }
+        else
+        {
+            return .tail(this);
+        }
+    }
+
+    ref Qualified save(this Qualified)()
     {
         debug(CollectionDList)
         {
@@ -403,7 +436,13 @@ public:
             writefln("DList.insert: begin");
             scope(exit) writefln("DList.insert: end");
         }
-        //if (_allocator is null) _allocator = theAllocator;
+        version(unittest) { } else
+        {
+            if (() @trusted { return _allocator.parent is null; }())
+            {
+                _allocator = AffixAllocator!(IAllocator, size_t)(theAllocator);
+            }
+        }
 
         size_t result;
         Node *tmpNode;
@@ -465,6 +504,71 @@ public:
         return insert(stuff);
     }
 
+    size_t insertBack(Stuff)(Stuff stuff)
+    if (isInputRange!Stuff && isImplicitlyConvertible!(ElementType!Stuff, T))
+    {
+        debug(CollectionSList)
+        {
+            writefln("SList.insertBack: begin");
+            scope(exit) writefln("SList.insertBack: end");
+        }
+        version(unittest) { } else
+        {
+            if (() @trusted { return _allocator.parent is null; }())
+            {
+                _allocator = AffixAllocator!(IAllocator, size_t)(theAllocator);
+            }
+        }
+
+        size_t result;
+        Node *tmpNode;
+        Node *tmpHead;
+        foreach (item; stuff)
+        {
+            Node *newNode = _allocator.make!(Node)(item, null, null);
+            if (tmpHead is null)
+            {
+                tmpHead = tmpNode = newNode;
+            }
+            else
+            {
+                tmpNode._next = newNode;
+                newNode._prev = tmpNode;
+                addRef(newNode._prev);
+                tmpNode = newNode;
+            }
+            ++result;
+        }
+
+        if (!tmpNode)
+        {
+            return 0;
+        }
+
+        if (_head is null)
+        {
+            _head = tmpHead;
+        }
+        else
+        {
+            Node *endNode;
+            for (endNode = _head; endNode._next !is null; endNode = endNode._next) { }
+            endNode._next = tmpHead;
+            // don't addRef(tmpHead) since the ref will pass from tmpHead to
+            // endNode._next when tmpHead's scope ends
+            tmpHead._prev = endNode;
+            addRef(endNode);
+        }
+
+        return result;
+    }
+
+    size_t insertBack(Stuff)(Stuff[] stuff...)
+    if (isImplicitlyConvertible!(Stuff, T))
+    {
+        return insertBack(stuff);
+    }
+
     void remove()
     {
         debug(CollectionDList)
@@ -501,7 +605,13 @@ public:
             delRef(tmpNode);
         }
         delRef(tmpNode); // Remove old head ref
-        destroyUnused(tmpNode);
+        if (tmpNode !is null
+                && ((tmpNode._prev !is null) || (tmpNode._next !is null)))
+        {
+            // If it was a single node list, only delRef must be used
+            // in order to avoid premature/double freeing
+            destroyUnused(tmpNode);
+        }
     }
 
     private void printRefCount(Node *sn = null)
@@ -530,79 +640,134 @@ public:
     }
 }
 
-version (unittest) private @trusted void testSimpleInit()
+version (unittest) private @trusted void testInit()
 {
-    DList!int dl = DList!int(1);
-    //dl.popFront();
-    //dl.printRefCount();
-    //dl.popFront();
-    //dl.printRefCount();
-    //auto dl2 = dl;
-    dl.insert(4, 5);
-    //dl.insert(4);
-    //dl.popFront();
-    //dl.popPrev();
-    dl.printRefCount();
-}
+    import std.algorithm.comparison : equal;
 
-version (unittest) private @trusted void testInsert()
-{
-    DList!int dl = DList!int(1);
-    dl.insert(2);
-    dl.printRefCount();
+    DList!int dl = DList!int();
+    assert(dl.empty);
+    int[] empty;
+    assert(equal(dl, empty));
+    assert(_allocator.bytesUsed == 0);
 
     DList!int dl2 = DList!int(1);
-    dl2.insert(2, 3);
-    dl2.printRefCount();
+    assert(equal(dl2, [1]));
 
     DList!int dl3 = DList!int(1, 2);
-    dl3.insert(3);
-    dl3.printRefCount();
+    assert(equal(dl3, [1, 2]));
 
-    DList!int dl4 = DList!int(1, 2);
-    dl4.insert(3, 4);
-    dl4.printRefCount();
+    DList!int dl4 = DList!int([1]);
+    assert(equal(dl4, [1]));
 
-    DList!int dl5 = DList!int(1, 2);
-    dl5.popFront();
-    dl5.insert(3);
-    dl5.printRefCount();
-
-    DList!int dl6 = DList!int(1, 2);
-    dl6.popFront();
-    dl6.insert(3, 4);
-    dl6.printRefCount();
-    //auto dl2 = dl;
-    //dl.popFront();
-    //dl.insert(4, 5);
-    //dl.popPrev();
-    //dl.printRefCount();
-}
-
-version (unittest) private @trusted void testRemove()
-{
-    DList!int dl = DList!int(1);
-    dl.printRefCount();
-    dl.remove();
-    dl.printRefCount();
-    dl.insert(2);
-    dl.printRefCount();
-    auto dl2 = dl;
-    auto dl3 = dl;
-    dl.printRefCount();
-    dl.popFront();
-    dl2.printRefCount();
-    dl2.popPrev();
-    dl3.printRefCount();
+    DList!int dl5 = DList!int([1, 2]);
+    assert(equal(dl5, [1, 2]));
 }
 
 @trusted unittest
 {
     import std.conv;
-    //testInsert();
+    testInit();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "DList ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
+
+version (unittest) private @trusted void testInsert()
+{
+    import std.algorithm.comparison : equal;
+
+    DList!int dl = DList!int(1);
+    dl.insert(2);
+    assert(equal(dl, [2, 1]));
+
+    DList!int dl2 = DList!int(1);
+    dl2.insert(2, 3);
+    assert(equal(dl2, [2, 3, 1]));
+
+    DList!int dl3 = DList!int(1, 2);
+    dl3.insert(3);
+    assert(equal(dl3, [3, 1, 2]));
+
+    DList!int dl4 = DList!int(1, 2);
+    dl4.insert(3, 4);
+    assert(equal(dl4, [3, 4, 1, 2]));
+
+    DList!int dl5 = DList!int(1, 2);
+    dl5.popFront();
+    dl5.insert(3);
+    assert(equal(dl5, [3, 2]));
+    dl5.popPrev();
+    assert(equal(dl5, [1, 3, 2]));
+
+    DList!int dl6 = DList!int(1, 2);
+    dl6.popFront();
+    dl6.insert(3, 4);
+    assert(equal(dl6, [3, 4, 2]));
+    dl6.popPrev();
+    assert(equal(dl6, [1, 3, 4, 2]));
+    dl6.insertBack(5);
+    assert(equal(dl6, [1, 3, 4, 2, 5]));
+    dl6.insertBack(6, 7);
+    assert(equal(dl6, [1, 3, 4, 2, 5, 6, 7]));
+    dl6.insertBack([8]);
+    assert(equal(dl6, [1, 3, 4, 2, 5, 6, 7, 8]));
+    dl6.insertBack([9, 10]);
+    assert(equal(dl6, [1, 3, 4, 2, 5, 6, 7, 8, 9, 10]));
+    int[] empty;
+    dl6.insertBack(empty);
+    assert(equal(dl6, [1, 3, 4, 2, 5, 6, 7, 8, 9, 10]));
+    dl6.insert(empty);
+    assert(equal(dl6, [1, 3, 4, 2, 5, 6, 7, 8, 9, 10]));
+}
+
+@trusted unittest
+{
+    import std.conv;
+    testInsert();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "DList ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
+
+version (unittest) private @trusted void testRemove()
+{
+    import std.algorithm.comparison : equal;
+
+    DList!int dl = DList!int(1);
+    dl.remove();
+    assert(_allocator.bytesUsed == 0);
+
+    dl.insert(2);
+    assert(_allocator.bytesUsed > 0);
+    auto oldUsage = _allocator.bytesUsed;
+
+    auto dl2 = dl;
+    auto dl3 = dl;
+    assert(_allocator.bytesUsed == oldUsage);
+
+    dl.popFront();
+    assert(dl.empty);
+    assert(_allocator.bytesUsed == oldUsage);
+
+    dl2.popPrev();
+    assert(dl2.empty);
+    assert(_allocator.bytesUsed == oldUsage);
+
+    auto dl4 = dl3;
+    assert(_allocator.bytesUsed == oldUsage);
+    dl4.remove();
+    assert(dl4.empty);
+    assert(_allocator.bytesUsed == oldUsage);
+    assert(!dl3.empty);
+}
+
+@trusted unittest
+{
+    import std.conv;
     testRemove();
-    assert(_allocator.bytesUsed == 0, "DList ref count leaks memory; leaked "
-                                    ~ to!string(_allocator.bytesUsed) ~ " bytes");
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "DList ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
 }
 
 version (unittest) private @trusted void testCopyAndRef()
@@ -640,25 +805,67 @@ version (unittest) private @trusted void testCopyAndRef()
 @trusted unittest
 {
     import std.conv;
-    //testCopyAndRef();
-    //testSimpleInit();
-    //testInsert();
-    assert(_allocator.bytesUsed == 0, "DList ref count leaks memory; leaked "
-                                    ~ to!string(_allocator.bytesUsed) ~ " bytes");
+    testCopyAndRef();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "DList ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
 }
 
-//@trusted unittest
-//{
-    //DList!int dl = DList!int(1, 2, 3);
+@trusted unittest
+{
+    import std.algorithm.comparison : equal;
 
-    //auto before = _allocator.bytesUsed;
-    //{
-        //DList!int dl2 = dl;
-        //dl2.popFront();
-        //dl.printRefCount();
-    //}
-    //assert(before == _allocator.bytesUsed);
-//}
+    DList!int dl = DList!int(1, 2, 3);
+    auto before = _allocator.bytesUsed;
+    {
+        DList!int dl2 = dl;
+        dl2.popFront();
+        assert(equal(dl2, [2, 3]));
+    }
+    assert(before == _allocator.bytesUsed);
+    assert(equal(dl, [1, 2, 3]));
+    dl.tail();
+}
+
+version(unittest) private @trusted void testImmutability()
+{
+    auto s = immutable DList!(int)(1, 2, 3);
+    auto s2 = s;
+    auto s3 = s2.save();
+
+    assert(s2.front == 1);
+    static assert(!__traits(compiles, s2.front = 4));
+    static assert(!__traits(compiles, s2.popFront()));
+
+    auto s4 = s2.tail;
+    assert(s4.front == 2);
+    static assert(!__traits(compiles, s4 = s4.tail));
+}
+
+version(unittest) private @trusted void testConstness()
+{
+    auto s = const DList!(int)(1, 2, 3);
+    auto s2 = s;
+    auto s3 = s2.save();
+
+    assert(s2.front == 1);
+    static assert(!__traits(compiles, s2.front = 4));
+    static assert(!__traits(compiles, s2.popFront()));
+
+    auto s4 = s2.tail;
+    assert(s4.front == 2);
+    static assert(!__traits(compiles, s4 = s4.tail));
+}
+
+@trusted unittest
+{
+    import std.conv;
+    testConstness();
+    testImmutability();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "DList ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
 
 void main(string[] args)
 {
