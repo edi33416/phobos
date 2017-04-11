@@ -536,9 +536,12 @@ version(unittest) private @safe void testConstness()
 
 @safe unittest
 {
+    import std.conv;
     testImmutability();
     testConstness();
-    assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
 }
 
 version(unittest) private @safe void testConcatAndAppend()
@@ -576,8 +579,11 @@ version(unittest) private @safe void testConcatAndAppend()
 
 @safe unittest
 {
+    import std.conv;
     testConcatAndAppend();
-    assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
 }
 
 version(unittest) private @safe void testSimple()
@@ -621,8 +627,11 @@ version(unittest) private @safe void testSimple()
 
 @safe unittest
 {
+    import std.conv;
     testSimple();
-    assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
 }
 
 version(unittest) private @safe void testSimpleImmutable()
@@ -661,8 +670,11 @@ version(unittest) private @safe void testSimpleImmutable()
 
 @safe unittest
 {
+    import std.conv;
     testSimpleImmutable();
-    assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
 }
 
 version(unittest) private @safe void testCopyAndRef()
@@ -699,8 +711,11 @@ version(unittest) private @safe void testCopyAndRef()
 
 @safe unittest
 {
+    import std.conv;
     testCopyAndRef();
-    assert(_allocator.bytesUsed == 0, "SList ref count leaks memory");
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
 }
 
 void main(string[] args)

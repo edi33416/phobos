@@ -507,10 +507,10 @@ public:
     size_t insertBack(Stuff)(Stuff stuff)
     if (isInputRange!Stuff && isImplicitlyConvertible!(ElementType!Stuff, T))
     {
-        debug(CollectionSList)
+        debug(CollectionDList)
         {
-            writefln("SList.insertBack: begin");
-            scope(exit) writefln("SList.insertBack: end");
+            writefln("DList.insertBack: begin");
+            scope(exit) writefln("DList.insertBack: end");
         }
         version(unittest) { } else
         {
