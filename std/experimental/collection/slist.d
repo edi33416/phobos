@@ -1,18 +1,11 @@
+module std.experimental.collection.slist;
+
+import std.experimental.collection.common;
 import std.experimental.allocator : IAllocator, theAllocator, make, dispose;
 import std.experimental.allocator.building_blocks.affix_allocator;
 import std.experimental.allocator.gc_allocator;
-import std.range: isInputRange;
-import core.atomic : atomicOp;
 
 debug(CollectionSList) import std.stdio;
-
-
-auto tail(Collection)(Collection collection)
-    if (isInputRange!Collection)
-{
-    collection.popFront();
-    return collection;
-}
 
 version(unittest)
 {
@@ -31,6 +24,7 @@ struct SList(T)
     import std.traits : isImplicitlyConvertible;
     import std.range.primitives : isInputRange, isForwardRange, ElementType;
     import std.conv : emplace;
+    import core.atomic : atomicOp;
 
 private:
     struct Node
