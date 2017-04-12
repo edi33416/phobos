@@ -569,6 +569,79 @@ public:
         return insertBack(stuff);
     }
 
+    auto ref opBinary(string op, U)(auto ref U rhs)
+        if (op == "~" &&
+            (is (U == typeof(this))
+             || is (U : T)
+             || (isInputRange!U && isImplicitlyConvertible!(ElementType!U, T))
+            ))
+    {
+        debug(CollectionDList)
+        {
+            writefln("DList.opBinary!~: begin");
+            scope(exit) writefln("DList.opBinary!~: end");
+        }
+
+        typeof(this) newList = typeof(this)(rhs);
+        newList.insert(this);
+        return newList;
+    }
+
+    auto ref opAssign()(auto ref typeof(this) rhs)
+    {
+        debug(CollectionDList)
+        {
+            writefln("DList.opAssign: begin");
+            scope(exit) writefln("DList.opAssign: end");
+        }
+
+        if (rhs._head !is null && _head is rhs._head)
+        {
+            return this;
+        }
+
+        if (rhs._head !is null)
+        {
+            addRef(rhs._head);
+            uint *pref = prefCount(rhs._head);
+            debug(CollectionDList) writefln("DList.opAssign: Node %s has refcount: %s",
+                    rhs._head._payload, *pref);
+        }
+
+        if (_head !is null)
+        {
+            Node *tmpNode = _head;
+            delRef(tmpNode);
+            if (tmpNode !is null
+                && ((tmpNode._prev !is null) || (tmpNode._next !is null)))
+            {
+                // If it was a single node list, only delRef must be used
+                // in order to avoid premature/double freeing
+                destroyUnused(tmpNode);
+            }
+        }
+        _head = rhs._head;
+
+        return this;
+    }
+
+    auto ref opOpAssign(string op, U)(auto ref U rhs)
+        if (op == "~" &&
+            (is (U == typeof(this))
+             || is (U : T)
+             || (isInputRange!U && isImplicitlyConvertible!(ElementType!U, T))
+            ))
+    {
+        debug(CollectionDList)
+        {
+            writefln("DList.opOpAssign!~: %s begin", typeof(this).stringof);
+            scope(exit) writefln("DList.opOpAssign!~: %s end", typeof(this).stringof);
+        }
+
+        insertBack(rhs);
+        return this;
+    }
+
     void remove()
     {
         debug(CollectionDList)
@@ -614,9 +687,8 @@ public:
         }
     }
 
-    private void printRefCount(Node *sn = null)
+    debug(CollectionDList) void printRefCount(Node *sn = null)
     {
-        import std.stdio;
         writefln("DList.printRefCount: begin");
         scope(exit) writefln("DList.printRefCount: end");
 
@@ -862,6 +934,77 @@ version(unittest) private @trusted void testConstness()
     import std.conv;
     testConstness();
     testImmutability();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "DList ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
+
+version(unittest) private @trusted void testConcatAndAppend()
+{
+    import std.algorithm.comparison : equal;
+
+    auto dl = DList!(int)(1, 2, 3);
+    DList!(int) dl2;
+
+    auto dl3 = dl ~ dl2;
+    assert(equal(dl3, [1, 2, 3]));
+
+    auto dl4 = dl3;
+    dl3 = dl3 ~ 4;
+    assert(equal(dl3, [1, 2, 3, 4]));
+    dl3 = dl3 ~ [5];
+    assert(equal(dl3, [1, 2, 3, 4, 5]));
+    assert(equal(dl4, [1, 2, 3]));
+
+    dl4 = dl3;
+    dl3 ~= 6;
+    assert(equal(dl3, [1, 2, 3, 4, 5, 6]));
+    dl3 ~= [7];
+    assert(equal(dl3, [1, 2, 3, 4, 5, 6, 7]));
+    assert(equal(dl4, [1, 2, 3, 4, 5, 6, 7]));
+
+    dl3 ~= dl3;
+    assert(equal(dl3, [1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7]));
+    assert(equal(dl4, [1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7]));
+
+    DList!int dl5;
+    dl5 ~= [1, 2, 3];
+    assert(equal(dl5, [1, 2, 3]));
+}
+
+@trusted unittest
+{
+    import std.conv;
+    testConcatAndAppend();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "DList ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
+
+version(unittest) private @trusted void testAssign()
+{
+    import std.algorithm.comparison : equal;
+
+    auto dl = DList!int(1, 2, 3);
+    assert(equal(dl, [1, 2, 3]));
+    {
+        auto dl2 = DList!int(4, 5, 6);
+        auto before = _allocator.bytesUsed;
+        dl = dl2;
+        assert(equal(dl, dl2));
+        // Check that opAssign freed the previous list that dl referenced
+        assert(_allocator.bytesUsed < before);
+    }
+    assert(equal(dl, [4, 5, 6]));
+    dl.popPrev();
+    assert(dl.empty);
+    assert(_allocator.bytesUsed == 0);
+}
+
+@trusted unittest
+{
+    import std.conv;
+    testAssign();
     auto bytesUsed = _allocator.bytesUsed;
     assert(bytesUsed == 0, "DList ref count leaks memory; leaked "
                            ~ to!string(bytesUsed) ~ " bytes");
