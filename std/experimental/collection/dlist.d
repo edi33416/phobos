@@ -218,7 +218,8 @@ public:
 
     // Immutable ctors
     private this(NodeQual, this Qualified)(NodeQual _newHead)
-        if (is(Qualified == immutable) || is(Qualified == const))
+        if (is(typeof(_head) : typeof(_newHead))
+            && (is(Qualified == immutable) || is(Qualified == const)))
     {
         _head = _newHead;
         if (_head !is null)
@@ -1005,6 +1006,34 @@ version(unittest) private @trusted void testAssign()
 {
     import std.conv;
     testAssign();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "DList ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
+
+version(unittest) private @trusted void testWithStruct()
+{
+    import std.algorithm.comparison : equal;
+
+    auto list = DList!int(1, 2, 3);
+    {
+        auto listOfLists = DList!(DList!int)(list);
+        assert(equal(listOfLists.front, [1, 2, 3]));
+        listOfLists.front.front = 2;
+        assert(equal(listOfLists.front, [2, 2, 3]));
+        static assert(!__traits(compiles, listOfLists.insert(1)));
+
+        auto immListOfLists = immutable DList!(DList!int)(list);
+        assert(immListOfLists.front.front == 2);
+        static assert(!__traits(compiles, immListOfLists.front.front = 2));
+    }
+    assert(equal(list, [2, 2, 3]));
+}
+
+@trusted unittest
+{
+    import std.conv;
+    testWithStruct();
     auto bytesUsed = _allocator.bytesUsed;
     assert(bytesUsed == 0, "DList ref count leaks memory; leaked "
                            ~ to!string(bytesUsed) ~ " bytes");
