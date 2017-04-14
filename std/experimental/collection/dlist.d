@@ -1039,6 +1039,33 @@ version(unittest) private @trusted void testWithStruct()
                            ~ to!string(bytesUsed) ~ " bytes");
 }
 
+version(unittest) private @trusted void testWithClass()
+{
+    class MyClass
+    {
+        int x;
+        this(int x) { this.x = x; }
+    }
+
+    MyClass c = new MyClass(10);
+    {
+        auto dl = DList!MyClass(c);
+        assert(dl.front.x == 10);
+        assert(dl.front is c);
+        dl.front.x = 20;
+    }
+    assert(c.x == 20);
+}
+
+@safe unittest
+{
+    import std.conv;
+    testWithClass();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "DList ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
+
 void main(string[] args)
 {
 }
