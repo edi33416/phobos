@@ -21,12 +21,15 @@ version(unittest)
 
 struct Array(T)
 {
-    import std.traits : isImplicitlyConvertible;
+    import std.traits : isImplicitlyConvertible, Unqual;
     import std.range.primitives : isInputRange, isForwardRange, ElementType;
     import std.conv : emplace;
     import core.atomic : atomicOp;
 
     T[] _payload;
+    Unqual!T[] _support;
+
+    static enum double capacityFactor = 3.0 / 2;
 
     version(unittest) { } else
     {
@@ -34,34 +37,34 @@ struct Array(T)
         Alloc _allocator;
     }
 
-    @trusted void addRef(this Qualified)()
+    @trusted void addRef(this Qualified)(Unqual!T[] support)
     {
-        assert(_payload !is null);
+        assert(support !is null);
         debug(CollectionArray)
         {
             writefln("Array.addRef: Array %s has refcount: %s; will be: %s",
-                    _payload, *prefCount(), *prefCount() + 1);
+                    support, *prefCount(support), *prefCount(support) + 1);
         }
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
-            atomicOp!"+="(*prefCount(), 1);
+            atomicOp!"+="(*prefCount(support), 1);
         }
         else
         {
-            ++*prefCount();
+            ++*prefCount(support);
         }
     }
 
-    @trusted void delRef()
+    @trusted void delRef(Unqual!T[] support)
     {
-        assert(_payload !is null);
-        uint *pref = prefCount();
+        assert(support !is null);
+        uint *pref = prefCount(support);
         debug(CollectionArray) writefln("Array.delRef: Array %s has refcount: %s; will be: %s",
-                _payload, *pref, *pref - 1);
+                support, *pref, *pref - 1);
         if (*pref == 0)
         {
-            debug(CollectionArray) writefln("Array.delRef: Deleting array %s", _payload);
-            _allocator.dispose(_payload);
+            debug(CollectionArray) writefln("Array.delRef: Deleting array %s", support);
+            _allocator.dispose(support);
         }
         else
         {
@@ -69,9 +72,9 @@ struct Array(T)
         }
     }
 
-    @trusted auto prefCount(this Qualified)()
+    @trusted auto prefCount(this Qualified)(Unqual!T[] support)
     {
-        assert(_payload !is null);
+        assert(support !is null);
         version(unittest)
         {
             alias _alloc = _allocator.parent;
@@ -81,27 +84,36 @@ struct Array(T)
         }
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
-            return cast(shared uint*)(&_alloc.prefix(_payload));
+            return cast(shared uint*)(&_alloc.prefix(support));
         }
         else
         {
-            return cast(uint*)(&_alloc.prefix(_payload));
+            return cast(uint*)(&_alloc.prefix(support));
         }
     }
 
     static string immutableInsert(string stuff)
     {
         return ""
-            ~"Node *tmpNode;"
-            ~"Node *tmpHead;"
-            ~"foreach (item; " ~ stuff ~ ")"
+            ~"if (stuff.length > slackBack)"
             ~"{"
-                ~"Node *newNode;"
-                ~"() @trusted { newNode = _allocator.make!(Node)(item, null); }();"
-                ~"(tmpHead ? tmpNode._next : tmpHead) = newNode;"
-                ~"tmpNode = newNode;"
+                ~"reserve(capacity + stuff.length);"
             ~"}"
-            ~"_head = () @trusted { return cast(immutable Node*)(tmpHead); }();";
+            ~"_support[_payload.length .. _payload.length + stuff.length] = stuff[];"
+            ~"_payload = cast(Unqual!T[])(_support[0 .. _payload.length + stuff.length]);";
+    }
+
+    void destroyUnused()
+    {
+        debug(CollectionArray)
+        {
+            writefln("Array.destoryUnused: begin");
+            scope(exit) writefln("Array.destoryUnused: end");
+        }
+        if (_support !is null)
+        {
+            delRef(_support);
+        }
     }
 
 public:
@@ -129,7 +141,7 @@ public:
         }
         else
         {
-            insert(values);
+            insert(0, values);
         }
     }
 
@@ -161,7 +173,7 @@ public:
         }
         else
         {
-            insert(stuff);
+            insert(0, stuff);
         }
     }
 
@@ -172,29 +184,28 @@ public:
             writefln("Array.postblit: begin");
             scope(exit) writefln("Array.postblit: end");
         }
-        if (_head !is null)
+        if (_support !is null)
         {
-            uint *pref = prefCount(_head);
-            addRef(_head);
-            debug(CollectionArray) writefln("Array.postblit: Node %s has refcount: %s",
-                    _head._payload, *pref);
+            addRef(_support);
+            debug(CollectionArray) writefln("Array.postblit: Array %s has refcount: %s",
+                    _support, *prefCount)();
         }
     }
 
     // Immutable ctors
-    private this(NodeQual, this Qualified)(NodeQual _newHead)
-        if (is(typeof(_head) : typeof(_newHead))
-            && (is(Qualified == immutable) || is(Qualified == const)))
-    {
-        _head = _newHead;
-        if (_head !is null)
-        {
-            shared uint *pref = prefCount(_head);
-            addRef(_head);
-            debug(CollectionArray) writefln("Array.ctor immutable: Node %s has "
-                    ~ "refcount: %s", _head._payload, *pref);
-        }
-    }
+    //private this(NodeQual, this Qualified)(NodeQual _newHead)
+        //if (is(typeof(_head) : typeof(_newHead))
+            //&& (is(Qualified == immutable) || is(Qualified == const)))
+    //{
+        //_head = _newHead;
+        //if (_head !is null)
+        //{
+            //shared uint *pref = prefCount(_head);
+            //addRef(_head);
+            //debug(CollectionArray) writefln("Array.ctor immutable: Node %s has "
+                    //~ "refcount: %s", _head._payload, *pref);
+        //}
+    //}
 
     @trusted ~this()
     {
@@ -208,29 +219,158 @@ public:
         destroyUnused();
     }
 
-    void destroyUnused()
+    private @trusted size_t slackFront() const
+    {
+        return _payload.ptr - _support.ptr;
+    }
+
+    private @trusted size_t slackBack() const
+    {
+        return _support.ptr + _support.length - _payload.ptr - _payload.length;
+    }
+
+    size_t length() const
+    {
+        return _payload.length;
+    }
+
+    @trusted size_t capacity() const
+    {
+        return length + slackBack;
+    }
+
+    void reserve(size_t n)
     {
         debug(CollectionArray)
         {
-            writefln("Array.destoryUnused: begin");
-            scope(exit) writefln("Array.destoryUnused: end");
+            writefln("Array.reserve: begin");
+            scope(exit) writefln("Array.reserve: end");
         }
-        while (_head !is null && *prefCount(_head) == 0)
+        if (n <= capacity) { return; }
+
+        if (_support && *prefCount(_support) == 0)
         {
-            debug(CollectionArray) writefln("Array.destoryUnused: One ref with head at %s",
-                    _head._payload);
-            Node *tmpNode = _head;
-            _head = _head._next;
-            delRef(tmpNode);
+            void[] buf = _support;
+            if (_allocator.expand(buf, (n - capacity) * T.sizeof))
+            {
+                _support = cast(Unqual!T[])(buf);
+                return;
+            }
+            else
+            {
+                //assert(0, "Array.reserve: Failed to expand array.");
+            }
         }
 
-        if (_head !is null && *prefCount(_head) > 0)
-        {
-            // We reached a copy, so just remove the head ref, thus deleting
-            // the copy in constant time (we are undoing the postblit)
-            debug(CollectionArray) writefln("Array.destoryUnused: Multiple refs with head at %s",
-                    _head._payload);
-            delRef(_head);
-        }
+        auto tmpSupport = cast(Unqual!T[])(_allocator.allocate(n * T.sizeof));
+        assert(tmpSupport !is null);
+        tmpSupport[0 .. _payload.length] = _payload[];
+        __dtor();
+        _support = tmpSupport;
+        _payload = cast(T[])(_support[0 .. _payload.length]);
+        assert(capacity >= n);
     }
+
+    //size_t insert(Stuff)(size_t pos, Stuff stuff)
+    //if (isInputRange!Stuff && isImplicitlyConvertible!(ElementType!Stuff, T))
+    //{
+        //debug(CollectionArray)
+        //{
+            //writefln("Array.insert: begin");
+            //scope(exit) writefln("Array.insert: end");
+        //}
+        //version(unittest) { } else
+        //{
+            //if (() @trusted { return _allocator.parent is null; }())
+            //{
+                //_allocator = AffixAllocator!(IAllocator, size_t)(theAllocator);
+            //}
+        //}
+
+        //size_t result;
+        //foreach (item; stuff)
+        //{
+            //++result;
+        //}
+        //return result;
+    //}
+
+    size_t insert(Stuff)(size_t pos, Stuff[] stuff...)
+    if (isImplicitlyConvertible!(Stuff, T))
+    {
+        debug(CollectionArray)
+        {
+            writefln("Array.insert: begin");
+            scope(exit) writefln("Array.insert: end");
+        }
+        assert(pos <= _payload.length);
+        version(unittest) { } else
+        {
+            if (() @trusted { return _allocator.parent is null; }())
+            {
+                _allocator = AffixAllocator!(IAllocator, size_t)(theAllocator);
+            }
+        }
+
+        if (stuff.length > slackBack)
+        {
+            double newCapacity = capacity ? capacity * capacityFactor : stuff.length;
+            while (newCapacity < capacity + stuff.length)
+            {
+                newCapacity = newCapacity * capacityFactor;
+            }
+            reserve(cast(size_t)(newCapacity));
+        }
+        _support[pos + stuff.length .. _payload.length + stuff.length] =
+            _support[pos .. _payload.length];
+        _support[pos .. pos + stuff.length] = stuff[];
+        _payload = cast(Unqual!T[])(_support[0 .. _payload.length + stuff.length]);
+        return stuff.length;
+    }
+
+    bool empty(this _)()
+    {
+        assert(_payload !is null);
+        return length == 0;
+    }
+
+    ref auto front(this _)()
+    {
+        assert(!empty, "Array.front: Array is empty");
+        return _payload[0];
+    }
+
+    void popFront()
+    {
+        debug(CollectionArray)
+        {
+            writefln("Array.popFront: begin");
+            scope(exit) writefln("Array.popFront: end");
+        }
+        assert(!empty, "Array.popFront: Array is empty");
+        _payload = _payload[1 .. $];
+    }
+}
+
+version(unittest) private @trusted void testInit()
+{
+    import std.stdio;
+    auto v = Array!int([10, 20, 30]);
+    writefln("Array %s cap %s", v, v.capacity);
+    v.insert(1, 1, 2);
+    writefln("Array %s cap %s", v, v.capacity);
+}
+
+@safe unittest
+{
+    import std.conv;
+    testInit();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "Array ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
+
+
+void main(string[] args)
+{
 }
