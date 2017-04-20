@@ -291,10 +291,10 @@ public:
     {
         debug(CollectionSList)
         {
-            writefln("SList.popFront: begin");
-            scope(exit) writefln("SList.popFront: end");
+            writefln("SList.tail: begin");
+            scope(exit) writefln("SList.tail: end");
         }
-        assert(!empty, "SList.popFront: List is empty");
+        assert(!empty, "SList.tail: List is empty");
 
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
