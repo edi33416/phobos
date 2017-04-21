@@ -99,23 +99,24 @@ struct Array(T)
         static if (hasLength!StuffType)
         {
             auto stuffLengthStr = ""
-                ~"{"
-                    ~"stuffLength = " ~ stuff ~ ".length;"
-                ~"}";
+                ~"size_t stuffLength = " ~ stuff ~ ".length;";
         }
         else
         {
             auto stuffLengthStr = ""
-                ~"{"
-                    ~"import std.range.primitives : walkLength;"
-                    ~"stuffLength = walkLength(" ~ stuff ~ ");"
-                ~"}";
+                ~"import std.range.primitives : walkLength;"
+                ~"size_t stuffLength = walkLength(" ~ stuff ~ ");";
         }
 
         return ""
-        ~"size_t stuffLength = 0;"
         ~ stuffLengthStr
         ~"auto tmpSupport = cast(Unqual!T[])(_allocator.allocate(stuffLength * T.sizeof));"
+        ~"assert(stuffLength == 0 || (stuffLength > 0 && tmpSupport !is
+        null));"
+        ~"for (size_t i = 0; i < tmpSupport.length; ++i)"
+        ~"{"
+                ~"emplace(&tmpSupport[i]);"
+        ~"}"
         ~"size_t i = 0;"
         ~"foreach (item; " ~ stuff ~ ")"
         ~"{"
@@ -210,7 +211,7 @@ public:
         {
             addRef(_support);
             debug(CollectionArray) writefln("Array.postblit: Array %s has refcount: %s",
-                    _support, *prefCount)();
+                    _support, *prefCount(_support));
         }
     }
 
@@ -273,6 +274,10 @@ public:
 
         auto tmpSupport = cast(Unqual!T[])(_allocator.allocate(n * T.sizeof));
         assert(tmpSupport !is null);
+        for (size_t i = 0; i < tmpSupport.length; ++i)
+        {
+                emplace(&tmpSupport[i]);
+        }
         tmpSupport[0 .. _payload.length] = _payload[];
         __dtor();
         _support = tmpSupport;
@@ -297,18 +302,24 @@ public:
             }
         }
 
-        size_t stuffLength = 0;
         static if (hasLength!Stuff)
         {
-            stuffLength = stuff.length;
+            size_t stuffLength = stuff.length;
         }
         else
         {
             import std.range.primitives : walkLength;
-            stuffLength = walkLength(stuff);
+            size_t stuffLength = walkLength(stuff);
         }
+        if (stuffLength == 0) return 0;
 
         auto tmpSupport = cast(Unqual!T[])(_allocator.allocate(stuffLength * T.sizeof));
+        assert(stuffLength == 0 || (stuffLength > 0 && tmpSupport !is null));
+        for (size_t i = 0; i < tmpSupport.length; ++i)
+        {
+                emplace(&tmpSupport[i]);
+        }
+
         size_t i = 0;
         foreach (item; stuff)
         {
@@ -336,6 +347,7 @@ public:
             }
         }
 
+        if (stuff.length == 0) return 0;
         if (stuff.length > slackBack)
         {
             double newCapacity = capacity ? capacity * capacityFactor : stuff.length;
@@ -345,16 +357,21 @@ public:
             }
             reserve(cast(size_t)(newCapacity));
         }
-        _support[pos + stuff.length .. _payload.length + stuff.length] =
-            _support[pos .. _payload.length];
+        //_support[pos + stuff.length .. _payload.length + stuff.length] =
+            //_support[pos .. _payload.length];
+        for (size_t i = _payload.length + stuff.length - 1; i >= pos +
+                stuff.length; --i)
+        {
+            // Avoids underflow if payload is empty
+            _support[i] = _support[i - stuff.length];
+        }
         _support[pos .. pos + stuff.length] = stuff[];
-        _payload = cast(Unqual!T[])(_support[0 .. _payload.length + stuff.length]);
+        _payload = cast(T[])(_support[0 .. _payload.length + stuff.length]);
         return stuff.length;
     }
 
     bool empty(this _)()
     {
-        assert(_payload !is null);
         return length == 0;
     }
 
@@ -486,6 +503,26 @@ public:
         mixin("return _payload[idx]" ~ op ~ "= elem;");
     }
 
+    auto ref opBinary(string op, U)(auto ref U rhs)
+        if (op == "~" &&
+            (is (U == typeof(this))
+             || is (U : T)
+             || (isInputRange!U && isImplicitlyConvertible!(ElementType!U, T))
+            ))
+    {
+        debug(CollectionArray)
+        {
+            writefln("Array.opBinary!~: begin");
+            scope(exit) writefln("Array.opBinary!~: end");
+        }
+
+        //TODO: should work for immutable, const as well
+
+        typeof(this) newArray = this.dup();
+        newArray.insert(length, rhs);
+        return newArray;
+    }
+
     auto ref opAssign()(auto ref typeof(this) rhs)
     {
         debug(CollectionArray)
@@ -505,7 +542,8 @@ public:
             debug(CollectionArray) writefln("Array.opAssign: Array %s has refcount: %s",
                     rhs._payload, *prefCount(rhs._support));
         }
-        __dtor();
+        //__dtor();
+        destroyUnused();
         _support = rhs._support;
         _payload = rhs._payload;
 
@@ -527,23 +565,205 @@ public:
         insert(length, rhs);
         return this;
     }
-
 }
 
 version(unittest) private @trusted void testInit()
 {
+    import std.algorithm.comparison : equal;
     import std.stdio;
+
     auto v = Array!int([10, 20, 30]);
     writefln("Array %s cap %s", v, v.capacity);
     v.insert(1, 1, 2);
     writefln("Array %s cap %s", v, v.capacity);
     auto t = v.dup();
+    t[0] *= 20;
+
+    assert(equal(v, [10, 1, 2, 20, 30]));
 }
 
 @safe unittest
 {
     import std.conv;
     testInit();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "Array ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
+
+version(unittest) private @trusted void testConcatAndAppend()
+{
+    import std.algorithm.comparison : equal;
+
+    auto a = Array!(int)(1, 2, 3);
+    Array!(int) a2;
+
+    auto a3 = a ~ a2;
+    assert(equal(a3, [1, 2, 3]));
+
+    auto a4 = a3;
+    a3 = a3 ~ 4;
+    assert(equal(a3, [1, 2, 3, 4]));
+    a3 = a3 ~ [5];
+    assert(equal(a3, [1, 2, 3, 4, 5]));
+    assert(equal(a4, [1, 2, 3]));
+
+    a4 = a3;
+    a3 ~= 6;
+    assert(equal(a3, [1, 2, 3, 4, 5, 6]));
+    a3 ~= [7];
+
+    a3 ~= a3;
+    assert(equal(a3, [1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7]));
+
+    Array!int a5;
+    a5 ~= [1, 2, 3];
+    assert(equal(a5, [1, 2, 3]));
+    auto a6 = a5;
+    a5 = a5;
+    a5[0] = 10;
+    assert(equal(a5, a6));
+}
+
+@safe unittest
+{
+    import std.conv;
+    testConcatAndAppend();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "Array ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
+
+version(unittest) private @trusted void testSimple()
+{
+    import std.algorithm.comparison : equal;
+    import std.algorithm.searching : canFind;
+
+    auto a = Array!int();
+    assert(a.empty);
+
+    size_t pos = 0;
+    a.insert(pos, 1, 2, 3);
+    assert(a.front == 1);
+    assert(equal(a, a));
+    assert(equal(a, [1, 2, 3]));
+
+    a.popFront();
+    assert(a.front == 2);
+    assert(equal(a, [2, 3]));
+
+    a.insert(pos, [4, 5, 6]);
+    a.insert(pos, 7);
+    a.insert(pos, [8]);
+    assert(equal(a, [8, 7, 4, 5, 6, 2, 3]));
+
+    a.insert(a.length, 0, 1);
+    a.insert(a.length, [-1, -2]);
+    assert(equal(a, [8, 7, 4, 5, 6, 2, 3, 0, 1, -1, -2]));
+
+    a.front = 9;
+    assert(equal(a, [9, 7, 4, 5, 6, 2, 3, 0, 1, -1, -2]));
+
+    auto aTail = a.tail;
+    assert(aTail.front == 7);
+    aTail.front = 8;
+    assert(aTail.front == 8);
+    assert(a.tail.front == 8);
+
+    assert(canFind(a, 2));
+    assert(!canFind(a, -10));
+}
+
+@safe unittest
+{
+    import std.conv;
+    testSimple();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "Array ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
+
+version(unittest) private @trusted void testSimpleImmutable()
+{
+    import std.algorithm.comparison : equal;
+    import std.algorithm.searching : canFind;
+
+    auto a = Array!(immutable int)();
+    assert(a.empty);
+
+    size_t pos = 0;
+    a.insert(pos, 1, 2, 3);
+    assert(a.front == 1);
+    assert(equal(a, a));
+    assert(equal(a, [1, 2, 3]));
+
+    a.popFront();
+    assert(a.front == 2);
+    assert(equal(a, [2, 3]));
+    assert(a.tail.front == 3);
+
+    a.insert(pos, [4, 5, 6]);
+    a.insert(pos, 7);
+    a.insert(pos, [8]);
+    assert(equal(a, [8, 7, 4, 5, 6, 2, 3]));
+
+    a.insert(a.length, 0, 1);
+    a.insert(a.length, [-1, -2]);
+    assert(equal(a, [8, 7, 4, 5, 6, 2, 3, 0, 1, -1, -2]));
+
+    // Cannot modify immutable values
+    static assert(!__traits(compiles, a.front = 9));
+
+    assert(canFind(a, 2));
+    assert(!canFind(a, -10));
+}
+
+@safe unittest
+{
+    import std.conv;
+    testSimpleImmutable();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "Array ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
+
+version(unittest) private @trusted void testCopyAndRef()
+{
+    import std.algorithm.comparison : equal;
+
+    auto aFromList = Array!int(1, 2, 3);
+    auto aFromRange = Array!int(aFromList);
+    assert(equal(aFromList, aFromRange));
+
+    aFromList.popFront();
+    assert(equal(aFromList, [2, 3]));
+    assert(equal(aFromRange, [1, 2, 3]));
+
+    size_t pos = 0;
+    Array!int aInsFromRange;
+    aInsFromRange.insert(pos, aFromList);
+    aFromList.popFront();
+    assert(equal(aFromList, [3]));
+    assert(equal(aInsFromRange, [2, 3]));
+
+    Array!int aInsBackFromRange;
+    aInsBackFromRange.insert(pos, aFromList);
+    aFromList.popFront();
+    assert(aFromList.empty);
+    assert(equal(aInsBackFromRange, [3]));
+
+    auto aFromRef = aInsFromRange;
+    auto aFromDup = aInsFromRange.dup;
+    assert(aInsFromRange.front == 2);
+    aFromRef.front = 5;
+    assert(aInsFromRange.front == 5);
+    assert(aFromDup.front == 2);
+}
+
+@safe unittest
+{
+    import std.conv;
+    testCopyAndRef();
     auto bytesUsed = _allocator.bytesUsed;
     assert(bytesUsed == 0, "Array ref count leaks memory; leaked "
                            ~ to!string(bytesUsed) ~ " bytes");
@@ -556,6 +776,7 @@ version(unittest) private @trusted void testImmutability()
     auto a3 = a2.save();
 
     assert(a2.front == 1);
+    assert(a2[0] == a2.front);
     static assert(!__traits(compiles, a2.front = 4));
     static assert(!__traits(compiles, a2.popFront()));
 
@@ -571,6 +792,7 @@ version(unittest) private @trusted void testConstness()
     auto a3 = a2.save();
 
     assert(a2.front == 1);
+    assert(a2[0] == a2.front);
     static assert(!__traits(compiles, a2.front = 4));
     static assert(!__traits(compiles, a2.popFront()));
 
@@ -589,6 +811,135 @@ version(unittest) private @trusted void testConstness()
                            ~ to!string(bytesUsed) ~ " bytes");
 }
 
+version(unittest) private @trusted void testWithStruct()
+{
+    import std.algorithm.comparison : equal;
+    import std.stdio;
+
+    auto array = Array!int(1, 2, 3);
+    {
+        auto arrayOfArrays = Array!(Array!int)(array);
+        assert(equal(arrayOfArrays.front, [1, 2, 3]));
+        arrayOfArrays.front.front = 2;
+        assert(equal(arrayOfArrays.front, [2, 2, 3]));
+        static assert(!__traits(compiles, arrayOfArrays.insert(1)));
+        assert(*arrayOfArrays.front.prefCount(arrayOfArrays.front._support) == 1);
+
+        auto immArrayOfArrays = immutable Array!(Array!int)(array);
+        assert(immArrayOfArrays.front.front == 2);
+        static assert(!__traits(compiles, immArrayOfArrays.front.front = 2));
+        assert(*immArrayOfArrays.front.prefCount(immArrayOfArrays.front._support) == 2);
+    }
+    assert(equal(array, [2, 2, 3]));
+}
+
+@safe unittest
+{
+    import std.conv;
+    testWithStruct();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "Array ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
+
+version(unittest) private @trusted void testWithClass()
+{
+    class MyClass
+    {
+        int x;
+        this(int x) { this.x = x; }
+    }
+
+    MyClass c = new MyClass(10);
+    {
+        auto a = Array!MyClass(c);
+        assert(a.front.x == 10);
+        assert(a.front is c);
+        a.front.x = 20;
+    }
+    assert(c.x == 20);
+}
+
+@safe unittest
+{
+    import std.conv;
+    testWithClass();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "Array ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
+
+version(unittest) private @trusted void testOpOverloads()
+{
+    auto a = Array!int(1, 2, 3, 4);
+    assert(a[0] == 1); // opIndex
+
+    // opIndexUnary
+    ++a[0];
+    assert(a[0] == 2);
+    --a[0];
+    assert(a[0] == 1);
+    a[0]++;
+    assert(a[0] == 2);
+    a[0]--;
+    assert(a[0] == 1);
+
+    // opIndexAssign
+    a[0] = 2;
+    assert(a[0] == 2);
+
+    // opIndexOpAssign
+    a[0] /= 2;
+    assert(a[0] == 1);
+    a[0] *= 2;
+    assert(a[0] == 2);
+    a[0] -= 1;
+    assert(a[0] == 1);
+    a[0] += 1;
+    assert(a[0] == 2);
+}
+
+@safe unittest
+{
+    import std.conv;
+    testOpOverloads();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "Array ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
+
+version(unittest) private @trusted void testSlice()
+{
+    import std.algorithm.comparison : equal;
+
+    auto a = Array!int(1, 2, 3, 4);
+    auto b = a[];
+    assert(equal(a, b));
+    b[1] = 5;
+    assert(a[1] == 5);
+
+    size_t startPos = 2;
+    auto c = b[startPos .. $];
+    assert(equal(c, [3, 4]));
+    c[0] = 5;
+    assert(equal(a, b));
+    assert(equal(a, [1, 5, 5, 4]));
+    assert(a.capacity == b.capacity && b.capacity == c.capacity + startPos);
+
+    c ~= 5;
+    assert(equal(c, [5, 4, 5]));
+    assert(equal(a, b));
+    assert(equal(a, [1, 5, 5, 4]));
+}
+
+@safe unittest
+{
+    import std.conv;
+    testSlice();
+    auto bytesUsed = _allocator.bytesUsed;
+    assert(bytesUsed == 0, "Array ref count leaks memory; leaked "
+                           ~ to!string(bytesUsed) ~ " bytes");
+}
 
 void main(string[] args)
 {
