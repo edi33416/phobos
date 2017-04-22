@@ -1,15 +1,13 @@
 module std.experimental.collection.slist;
 
 import std.experimental.collection.common;
-import std.experimental.allocator : IAllocator, theAllocator, make, dispose;
-import std.experimental.allocator.building_blocks.affix_allocator;
-import std.experimental.allocator.gc_allocator;
 
 debug(CollectionSList) import std.stdio;
 
 version(unittest)
 {
     import std.experimental.allocator.mallocator;
+    import std.experimental.allocator.building_blocks.affix_allocator;
     import std.experimental.allocator.building_blocks.stats_collector;
 
     private alias Alloc = StatsCollector!(
@@ -21,12 +19,14 @@ version(unittest)
 
 struct SList(T)
 {
+    import std.experimental.allocator : IAllocator, theAllocator, make, dispose;
+    import std.experimental.allocator.building_blocks.affix_allocator;
     import std.traits : isImplicitlyConvertible;
-    import std.range.primitives : isInputRange, isForwardRange, ElementType;
+    import std.range.primitives : isInputRange, ElementType;
     import std.conv : emplace;
     import core.atomic : atomicOp;
 
-private:
+//private:
     struct Node
     {
         T _payload;
@@ -126,6 +126,19 @@ private:
     }
 
 public:
+    this(this _)(IAllocator allocator)
+    {
+        debug(CollectionSList)
+        {
+            writefln("SList.ctor: begin");
+            scope(exit) writefln("SList.ctor: end");
+        }
+        version(unittest) { } else
+        {
+            _allocator = AffixAllocator!(IAllocator, size_t)(allocator);
+        }
+    }
+
     this(U, this Qualified)(U[] values...)
     if (isImplicitlyConvertible!(U, T))
     {
@@ -505,7 +518,7 @@ public:
     }
 }
 
-version(unittest) private @safe void testImmutability()
+version(unittest) private @safe @nogc void testImmutability()
 {
     auto s = immutable SList!(int)(1, 2, 3);
     auto s2 = s;
@@ -520,7 +533,7 @@ version(unittest) private @safe void testImmutability()
     static assert(!__traits(compiles, s4 = s4.tail));
 }
 
-version(unittest) private @safe void testConstness()
+version(unittest) private @safe @nogc void testConstness()
 {
     auto s = const SList!(int)(1, 2, 3);
     auto s2 = s;
@@ -774,6 +787,6 @@ version(unittest) private @safe void testWithClass()
                            ~ to!string(bytesUsed) ~ " bytes");
 }
 
-void main(string[] args)
-{
-}
+//void main(string[] args)
+//{
+//}
