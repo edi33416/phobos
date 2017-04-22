@@ -1,15 +1,13 @@
 module std.experimental.collection.array;
 
 import std.experimental.collection.common;
-import std.experimental.allocator : IAllocator, theAllocator, make, dispose;
-import std.experimental.allocator.building_blocks.affix_allocator;
-import std.experimental.allocator.gc_allocator;
 
 debug(CollectionArray) import std.stdio;
 
 version(unittest)
 {
     import std.experimental.allocator.mallocator;
+    import std.experimental.allocator.building_blocks.affix_allocator;
     import std.experimental.allocator.building_blocks.stats_collector;
 
     private alias Alloc = StatsCollector!(
@@ -21,12 +19,15 @@ version(unittest)
 
 struct Array(T)
 {
+    import std.experimental.allocator : IAllocator, theAllocator, make, dispose;
+    import std.experimental.allocator.building_blocks.affix_allocator;
     import std.traits : isImplicitlyConvertible, Unqual, isArray;
-    import std.range.primitives : isInputRange, isForwardRange, isInfinite,
+    import std.range.primitives : isInputRange, isInfinite,
            ElementType, hasLength;
     import std.conv : emplace;
     import core.atomic : atomicOp;
 
+//private:
     T[] _payload;
     Unqual!T[] _support;
 
@@ -140,6 +141,19 @@ struct Array(T)
     }
 
 public:
+    this(this _)(IAllocator allocator)
+    {
+        debug(CollectionArray)
+        {
+            writefln("Array.ctor: begin");
+            scope(exit) writefln("Array.ctor: end");
+        }
+        version(unittest) { } else
+        {
+            _allocator = AffixAllocator!(IAllocator, size_t)(allocator);
+        }
+    }
+
     this(U, this Qualified)(U[] values...)
     if (isImplicitlyConvertible!(U, T))
     {
@@ -242,6 +256,12 @@ public:
         return _payload.length;
     }
 
+    void forceLength(size_t len)
+    {
+        assert(len <= capacity);
+        _payload = cast(T[])(_support[slackFront .. len]);
+    }
+
     alias opDollar = length;
 
     @trusted size_t capacity() const
@@ -256,8 +276,15 @@ public:
             writefln("Array.reserve: begin");
             scope(exit) writefln("Array.reserve: end");
         }
-        if (n <= capacity) { return; }
+        version(unittest) { } else
+        {
+            if (() @trusted { return _allocator.parent is null; }())
+            {
+                _allocator = AffixAllocator!(IAllocator, size_t)(theAllocator);
+            }
+        }
 
+        if (n <= capacity) { return; }
         if (_support && *prefCount(_support) == 0)
         {
             void[] buf = _support;
@@ -489,7 +516,7 @@ public:
     }
     body
     {
-        _payload[idx] = elem;
+        return _payload[idx] = elem;
     }
 
     ref auto opIndexOpAssign(string op, U)(U elem, size_t idx)
@@ -565,30 +592,6 @@ public:
         insert(length, rhs);
         return this;
     }
-}
-
-version(unittest) private @trusted void testInit()
-{
-    import std.algorithm.comparison : equal;
-    import std.stdio;
-
-    auto v = Array!int([10, 20, 30]);
-    writefln("Array %s cap %s", v, v.capacity);
-    v.insert(1, 1, 2);
-    writefln("Array %s cap %s", v, v.capacity);
-    auto t = v.dup();
-    t[0] *= 20;
-
-    assert(equal(v, [10, 1, 2, 20, 30]));
-}
-
-@safe unittest
-{
-    import std.conv;
-    testInit();
-    auto bytesUsed = _allocator.bytesUsed;
-    assert(bytesUsed == 0, "Array ref count leaks memory; leaked "
-                           ~ to!string(bytesUsed) ~ " bytes");
 }
 
 version(unittest) private @trusted void testConcatAndAppend()
@@ -941,6 +944,6 @@ version(unittest) private @trusted void testSlice()
                            ~ to!string(bytesUsed) ~ " bytes");
 }
 
-void main(string[] args)
-{
-}
+//void main(string[] args)
+//{
+//}
