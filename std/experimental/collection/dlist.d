@@ -1,15 +1,13 @@
 module std.experimental.collection.dlist;
 
 import std.experimental.collection.common;
-import std.experimental.allocator : IAllocator, theAllocator, make, dispose;
-import std.experimental.allocator.building_blocks.affix_allocator;
-import std.experimental.allocator.gc_allocator;
 
 debug(CollectionDList) import std.stdio;
 
 version(unittest)
 {
     import std.experimental.allocator.mallocator;
+    import std.experimental.allocator.building_blocks.affix_allocator;
     import std.experimental.allocator.building_blocks.stats_collector,
         std.stdio;
 
@@ -21,10 +19,11 @@ version(unittest)
 }
 
 struct DList(T)
-    //if (is(typeof(allocatorObject(Allocator.instance))))
 {
+    import std.experimental.allocator : IAllocator, theAllocator, make, dispose;
+    import std.experimental.allocator.building_blocks.affix_allocator;
     import std.traits : isImplicitlyConvertible;
-    import std.range.primitives : isInputRange, isForwardRange, ElementType;
+    import std.range.primitives : isInputRange, ElementType;
     import std.conv : emplace;
     import core.atomic : atomicOp;
 
@@ -140,6 +139,19 @@ private:
     }
 
 public:
+    this(this _)(IAllocator allocator)
+    {
+        debug(CollectionDList)
+        {
+            writefln("DList.ctor: begin");
+            scope(exit) writefln("DList.ctor: end");
+        }
+        version(unittest) { } else
+        {
+            _allocator = AffixAllocator!(IAllocator, size_t)(allocator);
+        }
+    }
+
     this(U, this Qualified)(U[] values...)
     if (isImplicitlyConvertible!(U, T))
     {
