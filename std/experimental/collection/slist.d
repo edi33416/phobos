@@ -7,14 +7,10 @@ debug(CollectionSList) import std.stdio;
 version(unittest)
 {
     import std.experimental.allocator.mallocator;
-    import std.experimental.allocator.building_blocks.affix_allocator;
     import std.experimental.allocator.building_blocks.stats_collector;
+    import std.experimental.allocator : IAllocator, allocatorObject;
 
-    private alias Alloc = StatsCollector!(
-                        AffixAllocator!(Mallocator, uint),
-                        Options.bytesUsed
-    );
-    Alloc _allocator;
+    private alias SCAlloc = StatsCollector!(Mallocator, Options.bytesUsed);
 }
 
 struct SList(T)
@@ -49,10 +45,56 @@ struct SList(T)
 
     Node *_head;
 
-    version(unittest) { } else
+    alias MutableAlloc = AffixAllocator!(IAllocator, size_t);
+    struct RCMutableAlloc
     {
-        alias Alloc = AffixAllocator!(IAllocator, size_t);
-        Alloc _allocator;
+        MutableAlloc _allocator;
+        size_t rc;
+    }
+    alias ImmAlloc = AffixAllocator!(IAllocator, RCMutableAlloc);
+
+    ImmAlloc _ouroboros;
+    void[] _ouroborosSupport;
+
+    /// Returns the actual allocator from ouroboros
+    @trusted ref auto allocator(this _)()
+    {
+        assert(_ouroborosSupport !is null);
+        return _ouroboros.prefix(_ouroborosSupport)._allocator;
+    }
+
+    @trusted bool setAllocator(IAllocator allocator)
+    {
+        /// Constructs the ouroboros allocator from allocator and put's it in support
+        if (_ouroborosSupport is null)
+        {
+            // Create a tmp ouroboros that will allocate it's support
+            auto tmpOuroboros = ImmAlloc(allocator);
+            _ouroborosSupport = tmpOuroboros.allocate(1);
+            tmpOuroboros.prefix(_ouroborosSupport)._allocator = MutableAlloc(allocator);
+            _ouroboros = tmpOuroboros;
+            return true;
+        }
+        return false;
+    }
+
+    @trusted IAllocator getAllocator(this _)()
+    {
+        return _ouroborosSupport is null ? null : allocator().parent;
+    }
+
+    @trusted void disposeAllocator()
+    {
+        assert(_ouroborosSupport !is null);
+        if (_ouroboros.prefix(_ouroborosSupport).rc == 0)
+        {
+            auto ouroborosDisposer = ImmAlloc(getAllocator());
+            ouroborosDisposer.dispose(_ouroborosSupport);
+        }
+        else
+        {
+            --_ouroboros.prefix(_ouroborosSupport).rc;
+        }
     }
 
     @trusted void addRef(QualNode, this Qualified)(QualNode node)
@@ -73,7 +115,7 @@ struct SList(T)
         }
     }
 
-    @trusted void delRef(Node *node)
+    @trusted void delRef(ref Node *node)
     {
         assert(node !is null);
         uint *pref = prefCount(node);
@@ -82,7 +124,8 @@ struct SList(T)
         if (*pref == 0)
         {
             debug(CollectionSList) writefln("SList.delRef: Deleting node %s", node._payload);
-            _allocator.dispose(node);
+            allocator.dispose(node);
+            node = null;
         }
         else
         {
@@ -93,36 +136,39 @@ struct SList(T)
     @trusted auto prefCount(QualNode, this Qualified)(QualNode node)
     {
         assert(node !is null);
-        version(unittest)
-        {
-            alias _alloc = _allocator.parent;
-        } else
-        {
-            alias _alloc = _allocator;
-        }
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
-            return cast(shared uint*)(&_alloc.prefix(cast(void[Node.sizeof])(*node)));
+            return cast(shared uint*)(&allocator.prefix(cast(void[Node.sizeof])(*node)));
         }
         else
         {
-            return cast(uint*)(&_alloc.prefix(cast(void[Node.sizeof])(*node)));
+            return cast(uint*)(&allocator.prefix(cast(void[Node.sizeof])(*node)));
         }
     }
 
     static string immutableInsert(string stuff)
     {
         return ""
+            ~"ImmAlloc tmpOuroboros = ImmAlloc(allocator);"
+            ~"void[] tmpSupport = (() @trusted => tmpOuroboros.allocate(1))();"
+            ~"() @trusted {"
+                ~"tmpOuroboros.prefix(tmpSupport)._allocator = MutableAlloc(allocator);"
+            ~"}();"
+            ~"_ouroborosSupport = (() @trusted =>
+            cast(immutable)(tmpSupport))();"
+            ~"_ouroboros = (() @trusted => cast(immutable)(tmpOuroboros))();"
             ~"Node *tmpNode;"
             ~"Node *tmpHead;"
             ~"foreach (item; " ~ stuff ~ ")"
             ~"{"
                 ~"Node *newNode;"
-                ~"() @trusted { newNode = _allocator.make!(Node)(item, null); }();"
+                ~"() @trusted { newNode ="
+                    ~"tmpOuroboros.prefix(tmpSupport)._allocator.make!(Node)(item, null);"
+                ~"}();"
                 ~"(tmpHead ? tmpNode._next : tmpHead) = newNode;"
                 ~"tmpNode = newNode;"
             ~"}"
-            ~"_head = () @trusted { return cast(immutable Node*)(tmpHead); }();";
+            ~"_head = (() @trusted => cast(immutable Node*)(tmpHead))();";
     }
 
 public:
@@ -133,10 +179,7 @@ public:
             writefln("SList.ctor: begin");
             scope(exit) writefln("SList.ctor: end");
         }
-        version(unittest) { } else
-        {
-            _allocator = AffixAllocator!(IAllocator, size_t)(allocator);
-        }
+        setAllocator(allocator);
     }
 
     this(U, this Qualified)(U[] values...)
@@ -153,16 +196,13 @@ public:
             writefln("SList.ctor: begin");
             scope(exit) writefln("SList.ctor: end");
         }
-        version(unittest) { } else
-        {
-            _allocator = AffixAllocator!(IAllocator, size_t)(allocator);
-        }
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
             mixin(immutableInsert("values"));
         }
         else
         {
+            setAllocator(allocator);
             insert(values);
         }
     }
@@ -185,16 +225,13 @@ public:
             writefln("SList.ctor: begin");
             scope(exit) writefln("SList.ctor: end");
         }
-        version(unittest) { } else
-        {
-            _allocator = AffixAllocator!(IAllocator, size_t)(allocator);
-        }
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
             mixin(immutableInsert("stuff"));
         }
         else
         {
+            setAllocator(allocator);
             insert(stuff);
         }
     }
@@ -213,20 +250,34 @@ public:
             debug(CollectionSList) writefln("SList.postblit: Node %s has refcount: %s",
                     _head._payload, *pref);
         }
+        if (_ouroborosSupport !is null)
+        {
+            () @trusted { ++_ouroboros.prefix(_ouroborosSupport).rc; }();
+        }
     }
 
     // Immutable ctors
-    private this(NodeQual, this Qualified)(NodeQual _newHead)
+    private this(NodeQual, OuroQual, SuppQual, this Qualified)(NodeQual _newHead,
+            OuroQual ouroboros, SuppQual ouroborosSupport)
         if (is(typeof(_head) : typeof(_newHead))
             && (is(Qualified == immutable) || is(Qualified == const)))
     {
         _head = _newHead;
+        _ouroboros = ouroboros;
+        _ouroborosSupport = ouroborosSupport;
         if (_head !is null)
         {
             shared uint *pref = prefCount(_head);
             addRef(_head);
             debug(CollectionSList) writefln("SList.ctor immutable: Node %s has "
                     ~ "refcount: %s", _head._payload, *pref);
+        }
+        if (_ouroborosSupport !is null)
+        {
+            () @trusted {
+                auto p = cast(shared uint*)(&_ouroboros.prefix(_ouroborosSupport).rc);
+                atomicOp!"+="(*p, 1);
+            }();
         }
     }
 
@@ -265,6 +316,12 @@ public:
             debug(CollectionSList) writefln("SList.destoryUnused: Multiple refs with head at %s",
                     _head._payload);
             delRef(_head);
+        }
+
+        if(_ouroborosSupport !is null)
+        {
+            // If this was the last reference we also need to free the support
+            disposeAllocator();
         }
     }
 
@@ -311,7 +368,7 @@ public:
 
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
-            return typeof(this)(_head._next);
+            return typeof(this)(_head._next, _ouroboros, _ouroborosSupport);
         }
         else
         {
@@ -336,7 +393,15 @@ public:
             writefln("SList.dup: begin");
             scope(exit) writefln("SList.dup: end");
         }
-        return typeof(this)(this);
+        IAllocator alloc = getAllocator();
+        if (alloc is null)
+        {
+            import std.stdio;
+            writefln("FK dup");
+            alloc = theAllocator;
+        }
+        return typeof(this)(alloc, this);
+        //return typeof(this)(theAllocator, this);
     }
 
     size_t insert(Stuff)(Stuff stuff)
@@ -347,13 +412,8 @@ public:
             writefln("SList.insert: begin");
             scope(exit) writefln("SList.insert: end");
         }
-        version(unittest) { } else
-        {
-            if (() @trusted { return _allocator.parent is null; }())
-            {
-                _allocator = AffixAllocator!(IAllocator, size_t)(theAllocator);
-            }
-        }
+        // Ensure we have an allocator. If it was already set, this will do nothing
+        setAllocator(theAllocator);
 
         size_t result;
         Node *tmpNode;
@@ -361,7 +421,7 @@ public:
         foreach (item; stuff)
         {
             Node *newNode;
-            () @trusted { newNode = _allocator.make!(Node)(item, null); }();
+            () @trusted { newNode = allocator.make!(Node)(item, null); }();
             (tmpHead ? tmpNode._next : tmpHead) = newNode;
             tmpNode = newNode;
             ++result;
@@ -391,13 +451,8 @@ public:
             writefln("SList.insertBack: begin");
             scope(exit) writefln("SList.insertBack: end");
         }
-        version(unittest) { } else
-        {
-            if (() @trusted { return _allocator.parent is null; }())
-            {
-                _allocator = AffixAllocator!(IAllocator, size_t)(theAllocator);
-            }
-        }
+        // Ensure we have an allocator. If it was already set, this will do nothing
+        setAllocator(theAllocator);
 
         size_t result;
         Node *tmpNode;
@@ -405,7 +460,7 @@ public:
         foreach (item; stuff)
         {
             Node *newNode;
-            () @trusted { newNode = _allocator.make!(Node)(item, null); }();
+            () @trusted { newNode = allocator.make!(Node)(item, null); }();
             (tmpHead ? tmpNode._next : tmpHead) = newNode;
             tmpNode = newNode;
             ++result;
@@ -449,7 +504,23 @@ public:
             scope(exit) writefln("SList.opBinary!~: end");
         }
 
-        typeof(this) newList = typeof(this)(rhs);
+        IAllocator alloc = getAllocator();
+        if (alloc is null)
+        {
+            static if (is(U == typeof(this)))
+            {
+                alloc = rhs.getAllocator();
+            }
+            else
+            {
+                alloc = null;
+            }
+            if (alloc is null)
+            {
+                alloc = theAllocator;
+            }
+        }
+        typeof(this) newList = typeof(this)(alloc, rhs);
         newList.insert(this);
         return newList;
     }
@@ -474,8 +545,14 @@ public:
             debug(CollectionSList) writefln("SList.opAssign: Node %s has refcount: %s",
                     rhs._head._payload, *pref);
         }
+        if (rhs._ouroborosSupport !is null)
+        {
+            () @trusted { ++rhs._ouroboros.prefix(rhs._ouroborosSupport).rc; }();
+        }
         destroyUnused();
         _head = rhs._head;
+        _ouroboros = rhs._ouroboros;
+        _ouroborosSupport = rhs._ouroborosSupport;
 
         return this;
     }
@@ -503,12 +580,14 @@ public:
         popFront();
     }
 
-    debug(CollectionSList) void printRefCount()
+    //debug(CollectionSList) void printRefCount(this _)()
+    void printRefCount(this _)()
     {
+        import std.stdio;
         writefln("SList.printRefCount: begin");
         scope(exit) writefln("SList.printRefCount: end");
 
-        Node *tmpNode = _head;
+        Node *tmpNode = (() @trusted => cast(Node*)_head)();
         while (tmpNode !is null)
         {
             writefln("SList.printRefCount: Node %s has ref count %s",
@@ -518,9 +597,26 @@ public:
     }
 }
 
-version(unittest) private @safe @nogc void testImmutability()
+version(unittest) private @safe void testImmutability(IAllocator allocator)
 {
-    auto s = immutable SList!(int)(1, 2, 3);
+    auto s = immutable SList!(int)(allocator, 1, 2, 3);
+    //s.printRefCount();
+    auto s2 = s;
+    auto s3 = s2.save();
+
+    assert(s2.front == 1);
+    //s.printRefCount();
+    static assert(!__traits(compiles, s2.front = 4));
+    static assert(!__traits(compiles, s2.popFront()));
+
+    auto s4 = s2.tail;
+    assert(s4.front == 2);
+    static assert(!__traits(compiles, s4 = s4.tail));
+}
+
+version(unittest) private @safe void testConstness(IAllocator allocator)
+{
+    auto s = const SList!(int)(allocator, 1, 2, 3);
     auto s2 = s;
     auto s3 = s2.save();
 
@@ -533,37 +629,27 @@ version(unittest) private @safe @nogc void testImmutability()
     static assert(!__traits(compiles, s4 = s4.tail));
 }
 
-version(unittest) private @safe @nogc void testConstness()
-{
-    auto s = const SList!(int)(1, 2, 3);
-    auto s2 = s;
-    auto s3 = s2.save();
-
-    assert(s2.front == 1);
-    static assert(!__traits(compiles, s2.front = 4));
-    static assert(!__traits(compiles, s2.popFront()));
-
-    auto s4 = s2.tail;
-    assert(s4.front == 2);
-    static assert(!__traits(compiles, s4 = s4.tail));
-}
-
-@safe unittest
+@trusted unittest
 {
     import std.conv;
-    testImmutability();
-    testConstness();
-    auto bytesUsed = _allocator.bytesUsed;
-    assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
-                           ~ to!string(bytesUsed) ~ " bytes");
+    SCAlloc statsCollectorAlloc;
+    auto _allocator = allocatorObject(statsCollectorAlloc);
+
+    () @safe {
+        testImmutability(_allocator);
+        testConstness(_allocator);
+        auto bytesUsed = _allocator.impl.bytesUsed;
+        assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
+                ~ to!string(bytesUsed) ~ " bytes");
+    }();
 }
 
-version(unittest) private @safe void testConcatAndAppend()
+version(unittest) private @safe void testConcatAndAppend(IAllocator allocator)
 {
     import std.algorithm.comparison : equal;
 
-    auto sl = SList!(int)(1, 2, 3);
-    SList!(int) sl2;
+    auto sl = SList!(int)(allocator, 1, 2, 3);
+    SList!(int) sl2 = SList!int(allocator);
 
     auto sl3 = sl ~ sl2;
     assert(equal(sl3, [1, 2, 3]));
@@ -586,26 +672,31 @@ version(unittest) private @safe void testConcatAndAppend()
     assert(equal(sl3, [1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7]));
     assert(equal(sl4, [1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7]));
 
-    SList!int sl5;
+    SList!int sl5 = SList!int(allocator);
     sl5 ~= [1, 2, 3];
     assert(equal(sl5, [1, 2, 3]));
 }
 
-@safe unittest
+@trusted unittest
 {
     import std.conv;
-    testConcatAndAppend();
-    auto bytesUsed = _allocator.bytesUsed;
-    assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
-                           ~ to!string(bytesUsed) ~ " bytes");
+    SCAlloc statsCollectorAlloc;
+    auto _allocator = allocatorObject(statsCollectorAlloc);
+
+    () @safe {
+        testConcatAndAppend(_allocator);
+        auto bytesUsed = _allocator.impl.bytesUsed;
+        assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
+                ~ to!string(bytesUsed) ~ " bytes");
+    }();
 }
 
-version(unittest) private @safe void testSimple()
+version(unittest) private @safe void testSimple(IAllocator allocator)
 {
     import std.algorithm.comparison : equal;
     import std.algorithm.searching : canFind;
 
-    auto sl = SList!int();
+    auto sl = SList!int(allocator);
     assert(sl.empty);
 
     sl.insert(1, 2, 3);
@@ -639,21 +730,26 @@ version(unittest) private @safe void testSimple()
     assert(!canFind(sl, -10));
 }
 
-@safe unittest
+@trusted unittest
 {
     import std.conv;
-    testSimple();
-    auto bytesUsed = _allocator.bytesUsed;
-    assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
-                           ~ to!string(bytesUsed) ~ " bytes");
+    SCAlloc statsCollectorAlloc;
+    auto _allocator = allocatorObject(statsCollectorAlloc);
+
+    () @safe {
+        testSimple(_allocator);
+        auto bytesUsed = _allocator.impl.bytesUsed;
+        assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
+                ~ to!string(bytesUsed) ~ " bytes");
+    }();
 }
 
-version(unittest) private @safe void testSimpleImmutable()
+version(unittest) private @safe void testSimpleImmutable(IAllocator allocator)
 {
     import std.algorithm.comparison : equal;
     import std.algorithm.searching : canFind;
 
-    auto sl = SList!(immutable int)();
+    auto sl = SList!(immutable int)(allocator);
     assert(sl.empty);
 
     sl.insert(1, 2, 3);
@@ -682,34 +778,39 @@ version(unittest) private @safe void testSimpleImmutable()
     assert(!canFind(sl, -10));
 }
 
-@safe unittest
+@trusted unittest
 {
     import std.conv;
-    testSimpleImmutable();
-    auto bytesUsed = _allocator.bytesUsed;
-    assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
-                           ~ to!string(bytesUsed) ~ " bytes");
+    SCAlloc statsCollectorAlloc;
+    auto _allocator = allocatorObject(statsCollectorAlloc);
+
+    () @safe {
+        testSimpleImmutable(_allocator);
+        auto bytesUsed = _allocator.impl.bytesUsed;
+        assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
+                ~ to!string(bytesUsed) ~ " bytes");
+    }();
 }
 
-version(unittest) private @safe void testCopyAndRef()
+version(unittest) private @safe void testCopyAndRef(IAllocator allocator)
 {
     import std.algorithm.comparison : equal;
 
-    auto slFromList = SList!int(1, 2, 3);
-    auto slFromRange = SList!int(slFromList);
+    auto slFromList = SList!int(allocator, 1, 2, 3);
+    auto slFromRange = SList!int(allocator, slFromList);
     assert(equal(slFromList, slFromRange));
 
     slFromList.popFront();
     assert(equal(slFromList, [2, 3]));
     assert(equal(slFromRange, [1, 2, 3]));
 
-    SList!int slInsFromRange;
+    SList!int slInsFromRange = SList!int(allocator);
     slInsFromRange.insert(slFromList);
     slFromList.popFront();
     assert(equal(slFromList, [3]));
     assert(equal(slInsFromRange, [2, 3]));
 
-    SList!int slInsBackFromRange;
+    SList!int slInsBackFromRange = SList!int(allocator);
     slInsBackFromRange.insert(slFromList);
     slFromList.popFront();
     assert(slFromList.empty);
@@ -723,44 +824,54 @@ version(unittest) private @safe void testCopyAndRef()
     assert(slFromDup.front == 2);
 }
 
-@safe unittest
+@trusted unittest
 {
     import std.conv;
-    testCopyAndRef();
-    auto bytesUsed = _allocator.bytesUsed;
-    assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
-                           ~ to!string(bytesUsed) ~ " bytes");
+    SCAlloc statsCollectorAlloc;
+    auto _allocator = allocatorObject(statsCollectorAlloc);
+
+    () @safe {
+        testCopyAndRef(_allocator);
+        auto bytesUsed = _allocator.impl.bytesUsed;
+        assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
+                ~ to!string(bytesUsed) ~ " bytes");
+    }();
 }
 
-version(unittest) private @safe void testWithStruct()
+version(unittest) private @safe void testWithStruct(IAllocator allocator)
 {
     import std.algorithm.comparison : equal;
 
     auto list = SList!int(1, 2, 3);
     {
-        auto listOfLists = SList!(SList!int)(list);
+        auto listOfLists = SList!(SList!int)(allocator, list);
         assert(equal(listOfLists.front, [1, 2, 3]));
         listOfLists.front.front = 2;
         assert(equal(listOfLists.front, [2, 2, 3]));
         static assert(!__traits(compiles, listOfLists.insert(1)));
 
-        auto immListOfLists = immutable SList!(SList!int)(list);
+        auto immListOfLists = immutable SList!(SList!int)(allocator, list);
         assert(immListOfLists.front.front == 2);
         static assert(!__traits(compiles, immListOfLists.front.front = 2));
     }
     assert(equal(list, [2, 2, 3]));
 }
 
-@safe unittest
+@trusted unittest
 {
     import std.conv;
-    testWithStruct();
-    auto bytesUsed = _allocator.bytesUsed;
-    assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
-                           ~ to!string(bytesUsed) ~ " bytes");
+    SCAlloc statsCollectorAlloc;
+    auto _allocator = allocatorObject(statsCollectorAlloc);
+
+    () @safe {
+        testWithStruct(_allocator);
+        auto bytesUsed = _allocator.impl.bytesUsed;
+        assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
+                ~ to!string(bytesUsed) ~ " bytes");
+    }();
 }
 
-version(unittest) private @safe void testWithClass()
+version(unittest) private @safe void testWithClass(IAllocator allocator)
 {
     class MyClass
     {
@@ -770,7 +881,7 @@ version(unittest) private @safe void testWithClass()
 
     MyClass c = new MyClass(10);
     {
-        auto sl = SList!MyClass(c);
+        auto sl = SList!MyClass(allocator, c);
         assert(sl.front.x == 10);
         assert(sl.front is c);
         sl.front.x = 20;
@@ -778,15 +889,20 @@ version(unittest) private @safe void testWithClass()
     assert(c.x == 20);
 }
 
-@safe unittest
+@trusted unittest
 {
     import std.conv;
-    testWithClass();
-    auto bytesUsed = _allocator.bytesUsed;
-    assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
-                           ~ to!string(bytesUsed) ~ " bytes");
+    SCAlloc statsCollectorAlloc;
+    auto _allocator = allocatorObject(statsCollectorAlloc);
+
+    () @safe {
+        testWithClass(_allocator);
+        auto bytesUsed = _allocator.impl.bytesUsed;
+        assert(bytesUsed == 0, "SList ref count leaks memory; leaked "
+                ~ to!string(bytesUsed) ~ " bytes");
+    }();
 }
 
-//void main(string[] args)
-//{
-//}
+void main(string[] args)
+{
+}
