@@ -215,10 +215,9 @@ public:
         }
         if (_head !is null)
         {
-            uint *pref = prefCount(_head);
             addRef(_head);
             debug(CollectionSList) writefln("SList.postblit: Node %s has refcount: %s",
-                    _head._payload, *pref);
+                    _head._payload, *prefCount(_head));
         }
     }
 
@@ -348,12 +347,9 @@ public:
         IAllocator alloc = getAllocator();
         if (alloc is null)
         {
-            import std.stdio;
-            writefln("FK dup");
             alloc = theAllocator;
         }
         return typeof(this)(alloc, this);
-        //return typeof(this)(theAllocator, this);
     }
 
     size_t insert(Stuff)(Stuff stuff)
@@ -492,7 +488,7 @@ public:
 
         if (rhs._head !is null)
         {
-            addRef(rhs._head);
+            rhs.addRef(rhs._head);
             uint *pref = prefCount(rhs._head);
             debug(CollectionSList) writefln("SList.opAssign: Node %s has refcount: %s",
                     rhs._head._payload, *pref);
