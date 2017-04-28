@@ -46,43 +46,22 @@ struct SList(T)
     Node *_head;
 
     alias MutableAlloc = AffixAllocator!(IAllocator, size_t);
-    //struct RCMutableAlloc
-    //{
-        //MutableAlloc _allocator;
-        //size_t rc;
-    //}
-    //alias ImmAlloc = AffixAllocator!(IAllocator, RCMutableAlloc);
-
-    //ImmAlloc _ouroboros;
-    //void[] _ouroborosSupport;
-
-    Mutable!MutableAlloc _mAllocator;
+    Mutable!MutableAlloc _ouroborosAllocator;
 
     /// Returns the actual allocator from ouroboros
     @trusted ref auto allocator(this _)()
     {
-        //assert(_ouroborosSupport !is null);
-        //return _ouroboros.prefix(_ouroborosSupport)._allocator;
-        assert(!_mAllocator.isNull);
-        return _mAllocator.get();
+        assert(!_ouroborosAllocator.isNull);
+        return _ouroborosAllocator.get();
     }
 
+    /// Constructs the ouroboros allocator from allocator if the ouroboros
+    //allocator wasn't previously set
     @trusted bool setAllocator(IAllocator allocator)
     {
-        /// Constructs the ouroboros allocator from allocator and put's it in support
-        //if (_ouroborosSupport is null)
-        //{
-            //// Create a tmp ouroboros that will allocate it's support
-            //auto tmpOuroboros = ImmAlloc(allocator);
-            //_ouroborosSupport = tmpOuroboros.allocate(1);
-            //tmpOuroboros.prefix(_ouroborosSupport)._allocator = MutableAlloc(allocator);
-            //_ouroboros = tmpOuroboros;
-            //return true;
-        //}
-        if (_mAllocator.isNull)
+        if (_ouroborosAllocator.isNull)
         {
-            //_mAllocator.set(MutableAlloc(allocator));
-            _mAllocator = Mutable!(MutableAlloc)(allocator,
+            _ouroborosAllocator = Mutable!(MutableAlloc)(allocator,
                     MutableAlloc(allocator));
             return true;
         }
@@ -91,23 +70,8 @@ struct SList(T)
 
     @trusted IAllocator getAllocator(this _)()
     {
-        //return _ouroborosSupport is null ? null : allocator().parent;
-        return _mAllocator.isNull ? null : allocator().parent;
+        return _ouroborosAllocator.isNull ? null : allocator().parent;
     }
-
-    //@trusted void disposeAllocator()
-    //{
-        //assert(_ouroborosSupport !is null);
-        //if (_ouroboros.prefix(_ouroborosSupport).rc == 0)
-        //{
-            //auto ouroborosDisposer = ImmAlloc(getAllocator());
-            //ouroborosDisposer.dispose(_ouroborosSupport);
-        //}
-        //else
-        //{
-            //--_ouroboros.prefix(_ouroborosSupport).rc;
-        //}
-    //}
 
     @trusted void addRef(QualNode, this Qualified)(QualNode node)
     {
@@ -160,30 +124,9 @@ struct SList(T)
 
     static string immutableInsert(string stuff)
     {
-        //return ""
-            //~"ImmAlloc tmpOuroboros = ImmAlloc(allocator);"
-            //~"void[] tmpSupport = (() @trusted => tmpOuroboros.allocate(1))();"
-            //~"() @trusted {"
-                //~"tmpOuroboros.prefix(tmpSupport)._allocator = MutableAlloc(allocator);"
-            //~"}();"
-            //~"_ouroborosSupport = (() @trusted => cast(immutable)(tmpSupport))();"
-            //~"_ouroboros = (() @trusted => cast(immutable)(tmpOuroboros))();"
-            //~"Node *tmpNode;"
-            //~"Node *tmpHead;"
-            //~"foreach (item; " ~ stuff ~ ")"
-            //~"{"
-                //~"Node *newNode;"
-                //~"() @trusted { newNode ="
-                    //~"tmpOuroboros.prefix(tmpSupport)._allocator.make!(Node)(item, null);"
-                //~"}();"
-                //~"(tmpHead ? tmpNode._next : tmpHead) = newNode;"
-                //~"tmpNode = newNode;"
-            //~"}"
-            //~"_head = (() @trusted => cast(immutable Node*)(tmpHead))();";
-
         return ""
             ~"auto tmpAlloc = Mutable!(MutableAlloc)(allocator, MutableAlloc(allocator));"
-            ~"_mAllocator = (() @trusted => cast(immutable)(tmpAlloc))();"
+            ~"_ouroborosAllocator = (() @trusted => cast(immutable)(tmpAlloc))();"
             ~"Node *tmpNode;"
             ~"Node *tmpHead;"
             ~"foreach (item; " ~ stuff ~ ")"
@@ -277,24 +220,16 @@ public:
             debug(CollectionSList) writefln("SList.postblit: Node %s has refcount: %s",
                     _head._payload, *pref);
         }
-        //if (_ouroborosSupport !is null)
-        //{
-            //() @trusted { ++_ouroboros.prefix(_ouroborosSupport).rc; }();
-        //}
     }
 
     // Immutable ctors
-    //private this(NodeQual, OuroQual, SuppQual, this Qualified)(NodeQual _newHead,
-            //OuroQual ouroboros, SuppQual ouroborosSupport)
     private this(NodeQual, OuroQual, this Qualified)(NodeQual _newHead,
-            OuroQual ouroboros)
+            OuroQual ouroborosAllocator)
         if (is(typeof(_head) : typeof(_newHead))
             && (is(Qualified == immutable) || is(Qualified == const)))
     {
         _head = _newHead;
-        _mAllocator = ouroboros;
-        //_ouroboros = ouroboros;
-        //_ouroborosSupport = ouroborosSupport;
+        _ouroborosAllocator = ouroborosAllocator;
         if (_head !is null)
         {
             shared uint *pref = prefCount(_head);
@@ -302,13 +237,6 @@ public:
             debug(CollectionSList) writefln("SList.ctor immutable: Node %s has "
                     ~ "refcount: %s", _head._payload, *pref);
         }
-        //if (_ouroborosSupport !is null)
-        //{
-            //() @trusted {
-                //auto p = cast(shared uint*)(&_ouroboros.prefix(_ouroborosSupport).rc);
-                //atomicOp!"+="(*p, 1);
-            //}();
-        //}
     }
 
     @trusted ~this()
@@ -347,12 +275,6 @@ public:
                     _head._payload);
             delRef(_head);
         }
-
-        //if(_ouroborosSupport !is null)
-        //{
-            //// If this was the last reference we also need to free the support
-            //disposeAllocator();
-        //}
     }
 
     bool empty(this _)()
@@ -398,8 +320,7 @@ public:
 
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
-            //return typeof(this)(_head._next, _ouroboros, _ouroborosSupport);
-            return typeof(this)(_head._next, _mAllocator);
+            return typeof(this)(_head._next, _ouroborosAllocator);
         }
         else
         {
@@ -576,15 +497,9 @@ public:
             debug(CollectionSList) writefln("SList.opAssign: Node %s has refcount: %s",
                     rhs._head._payload, *pref);
         }
-        //if (rhs._ouroborosSupport !is null)
-        //{
-            //() @trusted { ++rhs._ouroboros.prefix(rhs._ouroborosSupport).rc; }();
-        //}
         destroyUnused();
         _head = rhs._head;
-        _mAllocator = rhs._mAllocator;
-        //_ouroboros = rhs._ouroboros;
-        //_ouroborosSupport = rhs._ouroborosSupport;
+        _ouroborosAllocator = rhs._ouroborosAllocator;
 
         return this;
     }
@@ -612,8 +527,7 @@ public:
         popFront();
     }
 
-    //debug(CollectionSList) void printRefCount(this _)()
-    void printRefCount(this _)()
+    debug(CollectionSList) void printRefCount(this _)()
     {
         import std.stdio;
         writefln("SList.printRefCount: begin");
