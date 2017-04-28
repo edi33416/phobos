@@ -794,7 +794,7 @@ version(unittest) private @safe void testWithStruct(IAllocator allocator)
 {
     import std.algorithm.comparison : equal;
 
-    auto list = SList!int(1, 2, 3);
+    auto list = SList!int(allocator, 1, 2, 3);
     {
         auto listOfLists = SList!(SList!int)(allocator, list);
         assert(equal(listOfLists.front, [1, 2, 3]));
