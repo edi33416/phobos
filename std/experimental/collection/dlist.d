@@ -96,7 +96,7 @@ private:
     @trusted void delRef(ref Node *node)
     {
         assert(node !is null);
-        uint *pref = prefCount(node);
+        size_t *pref = prefCount(node);
         debug(CollectionDList) writefln("DList.delRef: Node %s has refcount: %s; will be: %s",
                 node._payload, *pref, *pref - 1);
         if (*pref == 0)
@@ -116,11 +116,11 @@ private:
         assert(node !is null);
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
-            return cast(shared uint*)(&allocator.prefix(cast(void[Node.sizeof])(*node)));
+            return cast(shared size_t*)(&allocator.prefix(cast(void[Node.sizeof])(*node)));
         }
         else
         {
-            return cast(uint*)(&allocator.prefix(cast(void[Node.sizeof])(*node)));
+            return cast(size_t*)(&allocator.prefix(cast(void[Node.sizeof])(*node)));
         }
     }
 
