@@ -94,7 +94,7 @@ struct SList(T)
     @trusted void delRef(ref Node *node)
     {
         assert(node !is null);
-        uint *pref = prefCount(node);
+        size_t *pref = prefCount(node);
         debug(CollectionSList) writefln("SList.delRef: Node %s has refcount: %s; will be: %s",
                 node._payload, *pref, *pref - 1);
         if (*pref == 0)
@@ -114,11 +114,11 @@ struct SList(T)
         assert(node !is null);
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
-            return cast(shared uint*)(&allocator.prefix(cast(void[Node.sizeof])(*node)));
+            return cast(shared size_t*)(&allocator.prefix(cast(void[Node.sizeof])(*node)));
         }
         else
         {
-            return cast(uint*)(&allocator.prefix(cast(void[Node.sizeof])(*node)));
+            return cast(size_t*)(&allocator.prefix(cast(void[Node.sizeof])(*node)));
         }
     }
 
@@ -231,10 +231,9 @@ public:
         _ouroborosAllocator = ouroborosAllocator;
         if (_head !is null)
         {
-            shared uint *pref = prefCount(_head);
             addRef(_head);
             debug(CollectionSList) writefln("SList.ctor immutable: Node %s has "
-                    ~ "refcount: %s", _head._payload, *pref);
+                    ~ "refcount: %s", _head._payload, *prefCount(_head));
         }
     }
 
@@ -489,9 +488,8 @@ public:
         if (rhs._head !is null)
         {
             rhs.addRef(rhs._head);
-            uint *pref = prefCount(rhs._head);
             debug(CollectionSList) writefln("SList.opAssign: Node %s has refcount: %s",
-                    rhs._head._payload, *pref);
+                    rhs._head._payload, *prefCount(rhs._head));
         }
         destroyUnused();
         _head = rhs._head;

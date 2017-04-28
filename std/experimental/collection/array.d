@@ -79,7 +79,7 @@ struct Array(T)
     @trusted void delRef(Unqual!T[] support)
     {
         assert(support !is null);
-        uint *pref = prefCount(support);
+        size_t *pref = prefCount(support);
         debug(CollectionArray) writefln("Array.delRef: Array %s has refcount: %s; will be: %s",
                 support, *pref, *pref - 1);
         if (*pref == 0)
@@ -98,11 +98,11 @@ struct Array(T)
         assert(support !is null);
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
-            return cast(shared uint*)(&allocator.prefix(support));
+            return cast(shared size_t*)(&allocator.prefix(support));
         }
         else
         {
-            return cast(uint*)(&allocator.prefix(support));
+            return cast(size_t*)(&allocator.prefix(support));
         }
     }
 
