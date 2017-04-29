@@ -341,6 +341,58 @@ public:
         }
     }
 
+    bool isUnique(this _)()
+    {
+        debug(CollectionDList)
+        {
+            writefln("DList.isUnique: begin");
+            scope(exit) writefln("DList.isUnique: end");
+        }
+
+        if (empty)
+        {
+            return true;
+        }
+
+        Node *tmpNode = (() @trusted => cast(Node*)_head)();
+
+        // Rewind to the beginning of the list
+        while (tmpNode !is null && tmpNode._prev !is null)
+        {
+            tmpNode = tmpNode._prev;
+        }
+
+        // For a single node list, head should have rc == 0
+        if (tmpNode._next is null && (*prefCount(tmpNode) > 0))
+        {
+            return false;
+        }
+
+        while (tmpNode !is null)
+        {
+            if (tmpNode._next is null || tmpNode._prev is null)
+            {
+                // The first and last node should have rc == 0 unless the _head
+                // is pointing to them, in which case rc must be 1
+                if (((tmpNode is _head) && (*prefCount(tmpNode) > 1))
+                    || ((tmpNode !is _head) && (*prefCount(tmpNode) > 0)))
+                {
+                    return false;
+                }
+            }
+            else if (((tmpNode is _head) && (*prefCount(tmpNode) > 2))
+                    || ((tmpNode !is _head) && (*prefCount(tmpNode) > 1)))
+            {
+                // Any other node should have rc == 1 unless the _head
+                // is pointing to it, in which case rc must be 2
+                return false;
+            }
+            tmpNode = tmpNode._next;
+        }
+
+        return true;
+    }
+
     bool empty(this _)()
     {
         return _head is null;
@@ -750,6 +802,7 @@ version (unittest) private @trusted void testInit(IAllocator allocator)
 
     DList!int dl = DList!int(allocator);
     assert(dl.empty);
+    assert(dl.isUnique);
     int[] empty;
     assert(equal(dl, empty));
 
@@ -849,22 +902,28 @@ version (unittest) private @trusted void testRemove(IAllocator allocator)
     DList!int dl = DList!int(allocator, 1);
     dl.remove();
     assert(dl.empty);
+    assert(dl.isUnique);
     assert(!dl._ouroborosAllocator.isNull);
 
     dl.insert(2);
     auto dl2 = dl;
     auto dl3 = dl;
+    assert(!dl.isUnique);
 
     dl.popFront();
     assert(dl.empty);
+    assert(!dl._ouroborosAllocator.isNull);
 
     dl2.popPrev();
     assert(dl2.empty);
+    assert(dl3.isUnique);
 
     auto dl4 = dl3;
+    assert(!dl3.isUnique);
     dl4.remove();
     assert(dl4.empty);
     assert(!dl3.empty);
+    assert(dl3.isUnique);
 }
 
 @trusted unittest

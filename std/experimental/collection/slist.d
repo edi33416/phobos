@@ -275,6 +275,26 @@ public:
         }
     }
 
+    bool isUnique(this _)()
+    {
+        debug(CollectionSList)
+        {
+            writefln("SList.isUnique: begin");
+            scope(exit) writefln("SList.isUnique: end");
+        }
+
+        Node *tmpNode = (() @trusted => cast(Node*)_head)();
+        while (tmpNode !is null)
+        {
+            if (*prefCount(tmpNode) > 0)
+            {
+                return false;
+            }
+            tmpNode = tmpNode._next;
+        }
+        return true;
+    }
+
     bool empty(this _)()
     {
         return _head is null;
@@ -523,7 +543,6 @@ public:
 
     debug(CollectionSList) void printRefCount(this _)()
     {
-        import std.stdio;
         writefln("SList.printRefCount: begin");
         scope(exit) writefln("SList.printRefCount: end");
 
@@ -650,6 +669,7 @@ version(unittest) private @safe void testSimple(IAllocator allocator)
 
     auto sl = SList!int(allocator);
     assert(sl.empty);
+    assert(sl.isUnique);
 
     sl.insert(1, 2, 3);
     assert(sl.front == 1);
@@ -677,6 +697,7 @@ version(unittest) private @safe void testSimple(IAllocator allocator)
     slTail.front = 8;
     assert(slTail.front == 8);
     assert(sl.tail.front == 8);
+    assert(!sl.isUnique);
 
     assert(canFind(sl, 2));
     assert(!canFind(sl, -10));

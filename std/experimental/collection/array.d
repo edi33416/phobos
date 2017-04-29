@@ -386,6 +386,21 @@ public:
         return stuff.length;
     }
 
+    bool isUnique(this _)()
+    {
+        debug(CollectionArray)
+        {
+            writefln("Array.isUnique: begin");
+            scope(exit) writefln("Array.isUnique: end");
+        }
+
+        if (_support !is null)
+        {
+            return *prefCount(_support) == 0;
+        }
+        return true;
+    }
+
     bool empty(this _)()
     {
         return length == 0;
@@ -645,6 +660,7 @@ version(unittest) private @trusted void testSimple(IAllocator allocator)
 
     auto a = Array!int(allocator);
     assert(a.empty);
+    assert(a.isUnique);
 
     size_t pos = 0;
     a.insert(pos, 1, 2, 3);
@@ -673,6 +689,7 @@ version(unittest) private @trusted void testSimple(IAllocator allocator)
     aTail.front = 8;
     assert(aTail.front == 8);
     assert(a.tail.front == 8);
+    assert(!a.isUnique);
 
     assert(canFind(a, 2));
     assert(!canFind(a, -10));
