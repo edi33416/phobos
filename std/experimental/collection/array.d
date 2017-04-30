@@ -235,6 +235,23 @@ public:
         }
     }
 
+    // Immutable ctors
+    private this(SuppQual, PaylQual, OuroQual, this Qualified)(SuppQual support,
+            PaylQual payload, OuroQual ouroborosAllocator)
+        //if (is(typeof(support) : typeof(_newHead))
+            //&& (is(Qualified == immutable) || is(Qualified == const)))
+    {
+        _support = support;
+        _payload = payload;
+        _ouroborosAllocator = ouroborosAllocator;
+        if (_support !is null)
+        {
+            addRef(_support);
+            debug(CollectionArray) writefln("Array.ctor immutable: Array %s has "
+                    ~ "refcount: %s", _support, *prefCount(_support));
+        }
+    }
+
     @trusted ~this()
     {
         debug(CollectionArray)
@@ -490,13 +507,7 @@ public:
             writefln("Array.opSlice(s, e): begin");
             scope(exit) writefln("Array.opSlice(s, e): end");
         }
-        Unqual!(typeof(this)) result;
-        result._support = cast(typeof(result._support))(_support);
-        result._payload = cast(typeof(result._payload))(_payload[start .. end]);
-        result._ouroborosAllocator = cast(typeof(result._ouroborosAllocator))(_ouroborosAllocator);
-        addRef(_support);
-
-        return cast(typeof(this))(result);
+        return typeof(this)(_support, _payload[start .. end], _ouroborosAllocator);
     }
 
     ref auto opIndex(this _)(size_t idx)
