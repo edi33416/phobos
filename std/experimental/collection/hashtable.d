@@ -28,20 +28,56 @@ struct Hashtable(K, V)
     import std.range.primitives : isInputRange, isForwardRange, isInfinite,
            ElementType, hasLength;
     import std.conv : emplace;
-    import std.typecons : Tuple;
+    import std.typecons : Tuple, Nullable;
     import core.atomic : atomicOp;
 
 private:
-    Array!(SList!(Tuple!(K, V))) _buckets;
+    alias KVPair = Tuple!(K, "key", V, "value");
+    Array!(SList!(KVPair)) _buckets;
     Array!size_t _numElems; // This needs to be ref counted
     static enum double loadFactor = 0.75;
 
-    static string immutableInsert(string stuff)
+    alias MutableAlloc = AffixAllocator!(IAllocator, size_t);
+    Mutable!MutableAlloc _ouroborosAllocator;
+
+    /// Returns the actual allocator from ouroboros
+    @trusted ref auto allocator(this _)()
     {
-        return "";
+        assert(!_ouroborosAllocator.isNull);
+        return _ouroborosAllocator.get();
     }
 
 public:
+    /// Constructs the ouroboros allocator from allocator if the ouroboros
+    //allocator wasn't previously set
+    @trusted bool setAllocator(IAllocator allocator)
+    {
+        if (_ouroborosAllocator.isNull)
+        {
+            _ouroborosAllocator = Mutable!(MutableAlloc)(allocator,
+                    MutableAlloc(allocator));
+            _buckets = Array!(SList!(KVPair))(allocator);
+            _numElems = Array!size_t(allocator);
+            return true;
+        }
+        return false;
+    }
+
+    @trusted IAllocator getAllocator(this _)()
+    {
+        return _ouroborosAllocator.isNull ? null : allocator().parent;
+    }
+
+    this(this _)(IAllocator allocator)
+    {
+        debug(CollectionArray)
+        {
+            writefln("Array.ctor: begin");
+            scope(exit) writefln("Array.ctor: end");
+        }
+        setAllocator(allocator);
+    }
+
     this(U, this Qualified)(U assocArr)
     if (is(U == Value[Key], Value : V, Key : K))
     {
@@ -56,28 +92,18 @@ public:
             writefln("Hashtable.ctor: begin");
             scope(exit) writefln("Hashtable.ctor: end");
         }
-        version(unittest) { } else
-        {
-            _allocator = AffixAllocator!(IAllocator, size_t)(allocator);
-            _buckets = Array!(SList!(Tuple!(K, V)))(_allocator);
-            // Treat immutable
-            //auto tmpNumElems = Array!size_t(_allocator);
-            //tmpNumElems.reserve(1);
-            //tmpNumElems[0] = assocArr.length;
-            //_numElems = cast(typeof(_numElems))(tmpNumElems);
-            _numElems = Array!size_t(_allocator);
-        }
         static if (is(Qualified == immutable) || is(Qualified == const))
         {
-            mixin(immutableInsert("assocArr"));
+            // Build a mutable hashtable on the stack and pass ownership to this
+            auto tmp = Hashtable!(K, V)(allocator, assocArr);
+            _buckets = cast(typeof(_buckets))(tmp._buckets);
+            _numElems = cast(typeof(_numElems))(tmp._numElems);
+            auto tmpAlloc = Mutable!(MutableAlloc)(allocator, MutableAlloc(allocator));
+            _ouroborosAllocator = (() @trusted => cast(immutable)(tmpAlloc))();
         }
         else
         {
-            auto reqCap = requiredCapacity(assocArr.length);
-            _buckets.reserve(reqCap);
-            _buckets.forceLength(reqCap);
-            _numElems.reserve(1);
-            _numElems.forceLength(1);
+            setAllocator(allocator);
             insert(assocArr);
         }
     }
@@ -90,15 +116,8 @@ public:
             writefln("Hashtable.insert: begin");
             scope(exit) writefln("Hashtable.insert: end");
         }
-        version(unittest) { } else
-        {
-            if (() @trusted { return _allocator.parent is null; }())
-            {
-                _allocator = AffixAllocator!(IAllocator, size_t)(theAllocator);
-                _buckets = Array!(SList!(Tuple!(K, V)))(_allocator);
-                _numElems = Array!size_t(_allocator);
-            }
-        }
+
+        setAllocator(theAllocator);
         if (_buckets.empty)
         {
             auto reqCap = requiredCapacity(assocArr.length);
@@ -109,21 +128,14 @@ public:
         }
         foreach(k, v; assocArr)
         {
-            size_t pos = k.hashOf & (length - 1);
+            size_t pos = k.hashOf & (_buckets.length - 1);
             if (_buckets[pos].empty)
             {
-                version(unittest)
-                {
-                    _buckets[pos] = SList!(Tuple!(K, V))(Tuple!(K, V)(k, v));
-                }
-                else
-                {
-                    _buckets[pos] = SList(_allocator, Tuple!(K, V)(k, v));
-                }
+                _buckets[pos] = SList!(KVPair)(_buckets.getAllocator(), KVPair(k, v));
             }
             else
             {
-                _buckets[pos].insert(Tuple!(K, V)(k, v));
+                _buckets[pos].insert(KVPair(k, v));
             }
         }
         _numElems[0] += assocArr.length;
@@ -140,7 +152,14 @@ public:
         return numElems < maxPow2 ? 2 * numElems : maxPow2;
     }
 
+    /// Returns number of key-value pairs
     size_t length() const
+    {
+        return _numElems.empty ? 0 : _numElems[0];
+    }
+
+    /// Returns number of buckets
+    size_t size() const
     {
         return _buckets.length;
     }
@@ -157,8 +176,6 @@ public:
             writefln("Hashtable.front: begin");
             scope(exit) writefln("Hashtable.front: end");
         }
-        //import std.stdio;
-        //writefln("front: %s", _buckets);
         auto tmpBuckets = _buckets;
         while ((!tmpBuckets.empty) && tmpBuckets.front.empty)
         {
@@ -175,12 +192,19 @@ public:
             writefln("Hashtable.popFront: begin");
             scope(exit) writefln("Hashtable.popFront: end");
         }
+        if (!_buckets.isUnique)
+        {
+            _buckets = _buckets.dup();
+            _numElems = _numElems.dup();
+        }
         while ((!_buckets.empty) && _buckets.front.empty)
         {
             _buckets.popFront;
         }
         assert(!_buckets.empty, "Hashtable.front: Hashtable is empty");
         _buckets.front.popFront;
+        --_numElems[0];
+        // Find the next non-empty bucketList
         if (_buckets.front.empty)
         {
             while ((!_buckets.empty) && _buckets.front.empty)
@@ -190,78 +214,230 @@ public:
         }
     }
 
-    auto get(this _)(K key)
+    private const
+    void getKeyValues(string kv, BuckQual, ListQual, ArrQual)(BuckQual b, ListQual l, ref ArrQual values)
     {
-        size_t pos = key.hashOf & (length - 1);
-        return _buckets[pos];
+        if (b.empty)
+        {
+            return;
+        }
+        else if (l.empty)
+        {
+            auto bTail = b.tail;
+            if (!bTail.empty)
+            {
+                getKeyValues!kv(bTail, bTail.front, values);
+            }
+        }
+        else
+        {
+            static if (kv.length)
+            {
+                mixin("values ~= l.front." ~ kv ~ ";");
+            }
+            else
+            {
+                mixin("values ~= l.front;");
+            }
+            getKeyValues!kv(b, l.tail, values);
+        }
     }
 
-    Array!K getKeys(this _)()
+    Array!K keys(this _)()
     {
-        Array!K keys;
-        foreach(bucketList; _buckets)
+        debug(CollectionHashtable)
         {
-            auto tmpBL = bucketList.save;
-            pragma(msg, typeof(tmpBL));
-            import std.stdio;
-            tmpBL.empty || writefln("rc %s", *tmpBL.prefCount(tmpBL._head));
-            foreach(pair; tmpBL)
-            {
-                keys ~= pair[0];
-            }
+            writefln("Hashtable.keys: begin");
+            scope(exit) writefln("Hashtable.keys: end");
+        }
+
+        Array!K keys;
+        auto tmp = _buckets;
+        if (!_buckets.empty)
+        //if (!tmp.empty)
+        {
+            //getKeyValues!("key")(tmp, tmp.front, keys);
+            getKeyValues!("key")(_buckets, _buckets.front, keys);
         }
         return keys;
     }
 
-    Array!K getValues(this _)()
+    Array!V values(this _)()
     {
-        Array!K values;
-        foreach(bucketList; _buckets)
+        debug(CollectionHashtable)
         {
-            auto tmpBL = bucketList;
-            foreach(pair; tmpBL)
-            {
-                values ~= pair[1];
-            }
+            writefln("Hashtable.values: begin");
+            scope(exit) writefln("Hashtable.values: end");
         }
+
+        Array!V values;
+        if (!_buckets.empty)
+        {
+            getKeyValues!("value")(_buckets, _buckets.front, values);
+        }
+
         return values;
     }
-}
 
-@trusted unittest // SList Refcount BUG
-{
-    import std.stdio;
-    auto h = Hashtable!(int, int)([1 : 10]);
-    auto h2 = h;
-    //writeln(h.get(1));
-    writeln(*h2._buckets.prefCount(h2._buckets._support));
-    writeln(*h2._buckets[0].prefCount(h2._buckets[0]._head));
-    writeln(h2);
-    //auto i = 0;
-    //foreach(bucketList; h._buckets)
-    //{
-        //auto j = 0;
-        //foreach(pair; bucketList)
-        //{
-            //writefln("Pair[%s, %s]: %s", i, j++, pair);
-        //}
-        //++i;
-    //}
-    writefln("Empty? %s", h.empty);
-    writefln("Empty? %s", h._buckets.empty);
-    writeln(h._buckets);
 
-    //writefln("Pair %s", h.front);
-    //h.popFront;
-    //writefln("Empty? %s", h.empty);
+    Array!(Tuple!(K, "key", V, "value")) keyValuePairs(this _)()
+    {
+        debug(CollectionHashtable)
+        {
+            writefln("Hashtable.keyValuePairs: begin");
+            scope(exit) writefln("Hashtable.keyValuePairs: end");
+        }
 
-    auto a = Array!(SList!int)(SList!int(10));
-    writefln("Array %s", *a.prefCount(a._support));
-    writefln("SList %s", *a[0].prefCount(a[0]._head));
+        Array!KVPair pairs;
+        if (!_buckets.empty)
+        {
+            getKeyValues!("")(_buckets, _buckets.front, pairs);
+        }
 
-    auto a2 = a;
-    writefln("Array %s", *a.prefCount(a._support));
-    writefln("SList %s", *a[0].prefCount(a[0]._head));
+        return pairs;
+    }
+
+    private const
+    Nullable!V getValue(ListQual)(ListQual list, ref K key)
+    {
+        if (list.empty)
+        {
+            return Nullable!V.init;
+        }
+        else if (list.front.key == key)
+        {
+            return Nullable!V(list.front.value);
+        }
+        else
+        {
+            return getValue(list.tail, key);
+        }
+    }
+
+    V get(this _)(K key, V nullValue)
+    {
+        debug(CollectionHashtable)
+        {
+            writefln("Hashtable.get: begin");
+            scope(exit) writefln("Hashtable.get: end");
+        }
+
+        size_t pos = key.hashOf & (_buckets.length - 1);
+        auto result = getValue(_buckets[pos], key);
+        if (!result.isNull)
+        {
+            return result.get;
+        }
+        return nullValue;
+    }
+
+    Nullable!V opIndex(this _)(K key)
+    {
+        debug(CollectionHashtable)
+        {
+            writefln("Hashtable.opIndex: begin");
+            scope(exit) writefln("Hashtable.opIndex: end");
+        }
+
+        size_t pos = key.hashOf & (_buckets.length - 1);
+        return getValue(_buckets[pos], key);
+    }
+
+    Nullable!V opIndexUnary(string op)(K key)
+    {
+        debug(CollectionHashtable)
+        {
+            writefln("Hashtable.opIndexUnary!" ~ op ~ ": begin");
+            scope(exit) writefln("Hashtable.opIndexUnary!" ~ op ~ ": end");
+        }
+
+        size_t pos = key.hashOf & (_buckets.length - 1);
+        foreach(ref pair; _buckets[pos])
+        {
+            if (pair.key == key)
+            {
+                return Nullable!V(mixin(op ~ "pair.value"));
+            }
+        }
+        return Nullable!V.init;
+    }
+
+    Nullable!V opIndexAssign(U)(U val, K key)
+    if (isImplicitlyConvertible!(U, V))
+    {
+        debug(CollectionHashtable)
+        {
+            writefln("Hashtable.opIndexAssign: begin");
+            scope(exit) writefln("Hashtable.opIndexAssign: end");
+        }
+
+        size_t pos = key.hashOf & (_buckets.length - 1);
+        foreach(ref pair; _buckets[pos])
+        {
+            if (pair.key == key)
+            {
+                return Nullable!V(pair.value);
+            }
+        }
+        return Nullable!V.init;
+    }
+
+    Nullable!V opIndexOpAssign(string op, U)(U val, K key)
+    if (isImplicitlyConvertible!(U, V))
+    {
+        debug(CollectionHashtable)
+        {
+            writefln("Hashtable.opIndexOpAssign: begin");
+            scope(exit) writefln("Hashtable.opIndexOpAssign: end");
+        }
+
+        size_t pos = key.hashOf & (_buckets.length - 1);
+        foreach(ref pair; _buckets[pos])
+        {
+            if (pair.key == key)
+            {
+                return Nullable!V(mixin("pair.value" ~ op ~ "= val"));
+            }
+        }
+        return Nullable!V.init;
+    }
+
+
+    auto ref opBinary(string op, U)(auto ref U rhs)
+        if (op == "~" &&
+            (is (U == typeof(this))
+             || is (U : T)
+             || (isInputRange!U && isImplicitlyConvertible!(ElementType!U, T))
+            ));
+
+    auto ref opAssign()(auto ref typeof(this) rhs)
+    {
+        debug(CollectionHashtable)
+        {
+            writefln("Hashtable.opAssign: begin");
+            scope(exit) writefln("Hashtable.opAssign: end");
+        }
+
+        _buckets = rhs._buckets;
+        _numElems = rhs._numElems;
+        _ouroborosAllocator = rhs._ouroborosAllocator;
+        return this;
+    }
+
+    void remove(K key);
+
+    void clear()
+    {
+        debug(CollectionHashtable)
+        {
+            writefln("Hashtable.clear: begin");
+            scope(exit) writefln("Hashtable.clear: end");
+        }
+        _buckets = Array!(SList!(KVPair))(getAllocator());
+        _numElems = Array!size_t(getAllocator());
+    }
+
+    void rehash();
 }
 
 @trusted unittest
@@ -271,13 +447,34 @@ public:
 
     writeln(*h._buckets.prefCount(h._buckets._support));
     h._buckets[0].empty || writeln(*h._buckets[0].prefCount(h._buckets[0]._head));
-    writefln("h keys %s", h.getKeys());
-    writefln("h values %s", h.getValues());
+    writefln("h keys %s", h.keys());
+    writefln("h values %s", h.values());
     writeln(*h._buckets.prefCount(h._buckets._support));
     h._buckets[0].empty || writeln(*h._buckets[0].prefCount(h._buckets[0]._head));
     writeln(h);
     writeln(*h._buckets.prefCount(h._buckets._support));
     h._buckets[0].empty || writeln(*h._buckets[0].prefCount(h._buckets[0]._head));
+    writefln("h keys %s", h.keys());
+    writefln("h values %s", h.values());
+    writefln("h.get(1) %s", h.get(1, -1));
+    writefln("h.get(2) %s", h.get(200, -1));
+    writefln("opunary %s", --h[1]);
+    writefln("h.get(1) %s", h.get(1, -1));
+    writeln(h);
+
+    auto h2 = Hashtable!(int, int)();
+    writefln("h2.len %s", h2.length);
+    h2.insert([1 : 10]);
+    writefln("h2.len %s", h2.length);
+    //h2.clear();
+    writefln("h2.len %s", h2.empty);
+    writefln("h2.len %s", h2.length);
+
+    auto h3 = immutable Hashtable!(int, int)([1 : 10]);
+    writefln("h3 %s ", h3._buckets[0].front);
+    writefln("h3.get %s", h3.get(1, -1));
+    writefln("h3 values %s", h3.values());
+    writefln("h3 pairs %s", h3.keyValuePairs());
 }
 
 void main(string[] args)
