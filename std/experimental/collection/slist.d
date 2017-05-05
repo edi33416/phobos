@@ -535,10 +535,24 @@ public:
         return this;
     }
 
-    void remove()
+    void remove(size_t idx = 0)
     {
         assert(!empty, "SList.remove: List is empty");
-        popFront();
+        if (idx == 0)
+        {
+            popFront();
+            return;
+        }
+
+        Node *tmpNode = _head;
+        while(--idx != 0)
+        {
+            tmpNode = tmpNode._next;
+        }
+        Node *toDel = tmpNode._next;
+        assert(toDel !is null, "SList.remove: Index out of bounds");
+        tmpNode._next = tmpNode._next._next;
+        delRef(toDel);
     }
 
     debug(CollectionSList) void printRefCount(this _)()
@@ -666,6 +680,7 @@ version(unittest) private @safe void testSimple(IAllocator allocator)
 {
     import std.algorithm.comparison : equal;
     import std.algorithm.searching : canFind;
+    import std.range.primitives : walkLength;
 
     auto sl = SList!int(allocator);
     assert(sl.empty);
@@ -701,6 +716,13 @@ version(unittest) private @safe void testSimple(IAllocator allocator)
 
     assert(canFind(sl, 2));
     assert(!canFind(sl, -10));
+
+    sl.remove();
+    assert(equal(sl, [8, 4, 5, 6, 2, 3, 0, 1, -1, -2]));
+    sl.remove(2);
+    assert(equal(sl, [8, 4, 6, 2, 3, 0, 1, -1, -2]));
+    sl.remove(walkLength(sl) - 1);
+    assert(equal(sl, [8, 4, 6, 2, 3, 0, 1, -1]));
 }
 
 @trusted unittest
@@ -721,6 +743,7 @@ version(unittest) private @safe void testSimpleImmutable(IAllocator allocator)
 {
     import std.algorithm.comparison : equal;
     import std.algorithm.searching : canFind;
+    import std.range.primitives : walkLength;
 
     auto sl = SList!(immutable int)(allocator);
     assert(sl.empty);
@@ -749,6 +772,13 @@ version(unittest) private @safe void testSimpleImmutable(IAllocator allocator)
 
     assert(canFind(sl, 2));
     assert(!canFind(sl, -10));
+
+    sl.remove();
+    assert(equal(sl, [7, 4, 5, 6, 2, 3, 0, 1, -1, -2]));
+    sl.remove(2);
+    assert(equal(sl, [7, 4, 6, 2, 3, 0, 1, -1, -2]));
+    sl.remove(walkLength(sl) - 1);
+    assert(equal(sl, [7, 4, 6, 2, 3, 0, 1, -1]));
 }
 
 @trusted unittest
