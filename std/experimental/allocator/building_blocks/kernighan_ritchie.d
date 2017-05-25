@@ -338,12 +338,19 @@ struct KRRegion(ParentAllocator = NullAllocator)
     this(size_t n)
     {
         assert(n > Node.sizeof);
-        this(cast(ubyte[])(parent.allocate(n)));
+        static if (hasMember!(ParentAllocator, "allocate"))
+        {
+            this(cast(ubyte[])(parent.allocate(n)));
+        }
+        else
+        {
+            this(cast(ubyte[])(parent.allocateGC(n)));
+        }
     }
 
     /// Ditto
     static if (!is(ParentAllocator == NullAllocator)
-        && hasMember!(ParentAllocator, "deallocate"))
+               && hasMember!(ParentAllocator, "deallocate"))
     ~this()
     {
         parent.deallocate(payload);

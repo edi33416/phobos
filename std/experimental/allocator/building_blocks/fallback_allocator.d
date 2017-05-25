@@ -55,10 +55,37 @@ struct FallbackAllocator(Primary, Fallback)
     Allocates memory trying the primary allocator first. If it returns $(D
     null), the fallback allocator is tried.
     */
+    static if (hasMember!(Primary, "allocate")
+               || hasMember!(Fallback, "allocate"))
     void[] allocate(size_t s)
     {
-        auto result = primary.allocate(s);
-        return result.length == s ? result : fallback.allocate(s);
+        void[] result;
+        static if (hasMember!(Primary, "allocate"))
+        {
+            result = primary.allocate(s);
+        }
+
+        static if (hasMember!(Fallback, "allocate"))
+        {
+            return result.length == s ? result : fallback.allocate(s);
+        }
+    }
+
+    /// Ditto
+    static if (hasMember!(Primary, "allocateGC")
+               || hasMember!(Fallback, "allocateGC"))
+    void[] allocateGC(size_t s)
+    {
+        void[] result;
+        static if (hasMember!(Primary, "allocateGC"))
+        {
+            result = primary.allocateGC(s);
+        }
+
+        static if (hasMember!(Fallback, "allocateGC"))
+        {
+            return result.length == s ? result : fallback.allocateGC(s);
+        }
     }
 
     /**
@@ -66,7 +93,7 @@ struct FallbackAllocator(Primary, Fallback)
     allocators also offers it. It attempts to allocate using either or both.
     */
     static if (hasMember!(Primary, "alignedAllocate")
-        || hasMember!(Fallback, "alignedAllocate"))
+               || hasMember!(Fallback, "alignedAllocate"))
     void[] alignedAllocate(size_t s, uint a)
     {
         static if (hasMember!(Primary, "alignedAllocate"))
@@ -74,9 +101,29 @@ struct FallbackAllocator(Primary, Fallback)
             auto result = primary.alignedAllocate(s, a);
             if (result.length == s) return result;
         }}
+
         static if (hasMember!(Fallback, "alignedAllocate"))
         {{
             auto result = fallback.alignedAllocate(s, a);
+            if (result.length == s) return result;
+        }}
+        return null;
+    }
+
+    /// Ditto
+    static if (hasMember!(Primary, "alignedAllocateGC")
+               || hasMember!(Fallback, "alignedAllocateGC"))
+    void[] alignedAllocateGC(size_t s, uint a)
+    {
+        static if (hasMember!(Primary, "alignedAllocateGC"))
+        {{
+            auto result = primary.alignedAllocateGC(s, a);
+            if (result.length == s) return result;
+        }}
+
+        static if (hasMember!(Fallback, "alignedAllocateGC"))
+        {{
+            auto result = fallback.alignedAllocateGC(s, a);
             if (result.length == s) return result;
         }}
         return null;
@@ -122,35 +169,131 @@ struct FallbackAllocator(Primary, Fallback)
     allocation from $(D fallback) to $(D primary).
 
     */
-    static if (hasMember!(Primary, "owns"))
+    static if (hasMember!(Primary, "owns")
+               && (hasMember!(Primary, "allocate")
+                   || hasMember!(Fallback, "allocate"))
+               && (hasMember!(Primary, "deallocate")
+                   || hasMember!(Fallback, "deallocate"))
+               && (hasMember!(Primary, "reallocate")
+                   || hasMember!(Fallback, "reallocate")))
     bool reallocate(ref void[] b, size_t newSize)
     {
         bool crossAllocatorMove(From, To)(ref From from, ref To to)
         {
-            auto b1 = to.allocate(newSize);
-            if (b1.length != newSize) return false;
-            if (b.length < newSize) b1[0 .. b.length] = b[];
-            else b1[] = b[0 .. newSize];
-            static if (hasMember!(From, "deallocate"))
-                from.deallocate(b);
-            b = b1;
-            return true;
+            static if (!hasMember!(To, "allocate"))
+            {
+                return false;
+            }
+            else
+            {
+                auto b1 = to.allocate(newSize);
+                if (b1.length != newSize) return false;
+                if (b.length < newSize) b1[0 .. b.length] = b[];
+                else b1[] = b[0 .. newSize];
+                static if (hasMember!(From, "deallocate"))
+                    from.deallocate(b);
+                b = b1;
+                return true;
+            }
         }
 
         if (b is null || primary.owns(b) == Ternary.yes)
         {
-            return primary.reallocate(b, newSize)
-                // Move from primary to fallback
-                || crossAllocatorMove(primary, fallback);
+            static if (hasMember!(Primary, "reallocate"))
+            {
+                return primary.reallocate(b, newSize)
+                    // Move from primary to fallback
+                    || crossAllocatorMove(primary, fallback);
+            }
+            else
+            {
+                // Try to allocate new and free old with primary
+                return crossAllocatorMove(primary, primary)
+                    // If it fails, move to fallback
+                    || crossAllocatorMove(primary, fallback);
+            }
         }
-        return fallback.reallocate(b, newSize)
-            // Interesting. Move from fallback to primary.
-            || crossAllocatorMove(fallback, primary);
+
+        static if (hasMember!(Fallback, "reallocate"))
+        {
+            return fallback.reallocate(b, newSize)
+                // Interesting. Move from fallback to primary.
+                || crossAllocatorMove(fallback, primary);
+        }
+        else
+        {
+            // Try to allocate new and free old with fallback
+            return crossAllocatorMove(fallback, fallback)
+                // Interesting. Move from fallback to primary.
+                || crossAllocatorMove(fallback, primary);
+        }
     }
 
+    /// Ditto
+    static if (hasMember!(Primary, "owns")
+               && (hasMember!(Primary, "allocateGC")
+                   || hasMember!(Fallback, "allocateGC"))
+               && (hasMember!(Primary, "reallocateGC")
+                   || hasMember!(Fallback, "reallocateGC")))
+    bool reallocateGC(ref void[] b, size_t newSize)
+    {
+        bool crossAllocatorMove(From, To)(ref From from, ref To to)
+        {
+            static if (!hasMember!(To, "allocateGC"))
+            {
+                return false;
+            }
+            else
+            {
+                auto b1 = to.allocateGC(newSize);
+                if (b1.length != newSize) return false;
+                if (b.length < newSize) b1[0 .. b.length] = b[];
+                else b1[] = b[0 .. newSize];
+                //static if (hasMember!(From, "deallocate"))
+                //from.deallocate(b);
+                b = b1;
+                return true;
+            }
+        }
+
+        if (b is null || primary.owns(b) == Ternary.yes)
+        {
+            static if (hasMember!(Primary, "reallocateGC"))
+            {
+                return primary.reallocateGC(b, newSize)
+                    // Move from primary to fallback
+                    || crossAllocatorMove(primary, fallback);
+            }
+            else
+            {
+                // Try to allocate new and free old with primary
+                return crossAllocatorMove(primary, primary)
+                    // If it fails, move to fallback
+                    || crossAllocatorMove(primary, fallback);
+            }
+        }
+
+        static if (hasMember!(Fallback, "reallocateGC"))
+        {
+            return fallback.reallocateGC(b, newSize)
+                // Interesting. Move from fallback to primary.
+                || crossAllocatorMove(fallback, primary);
+        }
+        else
+        {
+            // Try to allocate new and free old with fallback
+            return crossAllocatorMove(fallback, fallback)
+                // Interesting. Move from fallback to primary.
+                || crossAllocatorMove(fallback, primary);
+        }
+    }
+
+    /// The same as reallocate, but with alignment
     static if (hasMember!(Primary, "owns")
         && (hasMember!(Primary, "alignedAllocate")
-            || hasMember!(Fallback, "alignedAllocate")))
+            || hasMember!(Fallback, "alignedAllocate"))
+        && (hasMember!(Primary, "alignedReallocate")
+            || hasMember!(Fallback, "alignedReallocate")))
     bool alignedReallocate(ref void[] b, size_t newSize, uint a)
     {
         bool crossAllocatorMove(From, To)(ref From from, ref To to)
@@ -166,13 +309,15 @@ struct FallbackAllocator(Primary, Fallback)
                 if (b.length < newSize) b1[0 .. b.length] = b[];
                 else b1[] = b[0 .. newSize];
                 static if (hasMember!(From, "deallocate"))
+                {
                     from.deallocate(b);
+                }
                 b = b1;
                 return true;
             }
         }
 
-        static if (hasMember!(Primary, "alignedAllocate"))
+        static if (hasMember!(Primary, "alignedReallocate"))
         {
             if (b is null || primary.owns(b) == Ternary.yes)
             {
@@ -180,9 +325,59 @@ struct FallbackAllocator(Primary, Fallback)
                     || crossAllocatorMove(primary, fallback);
             }
         }
-        static if (hasMember!(Fallback, "alignedAllocate"))
+
+        static if (hasMember!(Fallback, "alignedReallocate"))
         {
             return fallback.alignedReallocate(b, newSize, a)
+                || crossAllocatorMove(fallback, primary);
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    /// Ditto
+    static if (hasMember!(Primary, "owns")
+        && (hasMember!(Primary, "alignedAllocateGC")
+            || hasMember!(Fallback, "alignedAllocateGC"))
+        && (hasMember!(Primary, "alignedReallocateGC")
+            || hasMember!(Fallback, "alignedReallocateGC")))
+    bool alignedReallocateGC(ref void[] b, size_t newSize, uint a)
+    {
+        bool crossAllocatorMove(From, To)(ref From from, ref To to)
+        {
+            static if (!hasMember!(To, "alignedAllocateGC"))
+            {
+                return false;
+            }
+            else
+            {
+                auto b1 = to.alignedAllocateGC(newSize, a);
+                if (b1.length != newSize) return false;
+                if (b.length < newSize) b1[0 .. b.length] = b[];
+                else b1[] = b[0 .. newSize];
+                //static if (hasMember!(From, "deallocateGC"))
+                //{
+                    //from.deallocateGC(b);
+                //}
+                b = b1;
+                return true;
+            }
+        }
+
+        static if (hasMember!(Primary, "alignedReallocateGC"))
+        {
+            if (b is null || primary.owns(b) == Ternary.yes)
+            {
+                return primary.alignedReallocateGC(b, newSize, a)
+                    || crossAllocatorMove(primary, fallback);
+            }
+        }
+
+        static if (hasMember!(Fallback, "alignedReallocateGC"))
+        {
+            return fallback.alignedReallocateGC(b, newSize, a)
                 || crossAllocatorMove(fallback, primary);
         }
         else
@@ -221,9 +416,9 @@ struct FallbackAllocator(Primary, Fallback)
     request is forwarded to $(D fallback.deallocate) if it is defined, or is a
     no-op otherwise.
     */
-    static if (hasMember!(Primary, "owns") &&
-        (hasMember!(Primary, "deallocate")
-            || hasMember!(Fallback, "deallocate")))
+    static if (hasMember!(Primary, "owns")
+               && (hasMember!(Primary, "deallocate")
+                   || hasMember!(Fallback, "deallocate")))
     bool deallocate(void[] b)
     {
         if (primary.owns(b) == Ternary.yes)

@@ -75,7 +75,14 @@ struct Quantizer(ParentAllocator, alias roundingFunction)
     */
     void[] allocate(size_t n)
     {
-        auto result = parent.allocate(goodAllocSize(n));
+        static if (hasMember!(ParentAllocator, "allocate"))
+        {
+            auto result = parent.allocate(goodAllocSize(n));
+        }
+        else
+        {
+            auto result = parent.allocateGC(goodAllocSize(n));
+        }
         return result.ptr ? result.ptr[0 .. n] : null;
     }
 
@@ -84,10 +91,18 @@ struct Quantizer(ParentAllocator, alias roundingFunction)
     $(D allocate) by forwarding to
     $(D parent.alignedAllocate(goodAllocSize(n), a)).
     */
-    static if (hasMember!(ParentAllocator, "alignedAllocate"))
+    static if (hasMember!(ParentAllocator, "alignedAllocate")
+               || hasMember!(ParentAllocator, "alignedAllocateGC"))
     void[] alignedAllocate(size_t n, uint)
     {
-        auto result = parent.alignedAllocate(goodAllocSize(n));
+        static if (hasMember!(ParentAllocator, "alignedAllocate"))
+        {
+            auto result = parent.alignedAllocate(goodAllocSize(n));
+        }
+        else
+        {
+            auto result = parent.alignedAllocateGC(goodAllocSize(n));
+        }
         return result.ptr ? result.ptr[0 .. n] : null;
     }
 
@@ -156,7 +171,14 @@ struct Quantizer(ParentAllocator, alias roundingFunction)
         }
         // Defer to parent (or global) with quantized size
         auto original = b.ptr[0 .. allocated];
-        if (!parent.reallocate(original, toAllocate)) return false;
+        static if (hasMember!(ParentAllocator, "reallocate"))
+        {
+            if (!parent.reallocate(original, toAllocate)) return false;
+        }
+        else
+        {
+            if (!parent.reallocateGC(original, toAllocate)) return false;
+        }
         b = original.ptr[0 .. s];
         return true;
     }
@@ -166,7 +188,8 @@ struct Quantizer(ParentAllocator, alias roundingFunction)
     occurs in place under the conditions required by $(D expand). Shrinking
     occurs in place if $(D goodAllocSize(b.length) == goodAllocSize(s)).
     */
-    static if (hasMember!(ParentAllocator, "alignedAllocate"))
+    static if (hasMember!(ParentAllocator, "alignedAllocate")
+               || hasMember!(ParentAllocator, "alignedAllocateGC"))
     bool alignedReallocate(ref void[] b, size_t s, uint a)
     {
         if (!b.ptr)
@@ -187,7 +210,14 @@ struct Quantizer(ParentAllocator, alias roundingFunction)
         }
         // Defer to parent (or global) with quantized size
         auto original = b.ptr[0 .. allocated];
-        if (!parent.alignedReallocate(original, toAllocate, a)) return false;
+        static if (hasMember!(ParentAllocator, "alignedReallocate"))
+        {
+            if (!parent.alignedReallocate(original, toAllocate, a)) return false;
+        }
+        else
+        {
+            if (!parent.alignedReallocateGC(original, toAllocate, a)) return false;
+        }
         b = original.ptr[0 .. s];
         return true;
     }

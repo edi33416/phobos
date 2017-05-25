@@ -162,6 +162,7 @@ struct AllocatorList(Factory, BookkeepingAllocator = GCAllocator)
     fails, subsequent calls to $(D allocate) will not cause more calls to $(D
     make).
     */
+    static if (hasMember!(Allocator, "allocate"))
     void[] allocate(size_t s)
     {
         for (auto p = &root, n = *p; n; p = &n.next, n = *p)
@@ -188,6 +189,39 @@ struct AllocatorList(Factory, BookkeepingAllocator = GCAllocator)
         if (auto a = addAllocator(s))
         {
             auto result = a.allocate(s);
+            assert(owns(result) == Ternary.yes || !result.ptr);
+            return result;
+        }
+        return null;
+    }
+
+    static if (hasMember!(Allocator, "allocateGC"))
+    void[] allocate(size_t s)
+    {
+        for (auto p = &root, n = *p; n; p = &n.next, n = *p)
+        {
+            auto result = n.allocateGC(s);
+            if (result.length != s) continue;
+            // Bring to front if not already
+            if (root != n)
+            {
+                *p = n.next;
+                n.next = root;
+                root = n;
+            }
+            return result;
+        }
+        // Can't allocate from the current pool. Check if we just added a new
+        // allocator, in that case it won't do any good to add yet another.
+        if (root && root.empty == Ternary.yes)
+        {
+            // no can do
+            return null;
+        }
+        // Add a new allocator
+        if (auto a = addAllocator(s))
+        {
+            auto result = a.allocateGC(s);
             assert(owns(result) == Ternary.yes || !result.ptr);
             return result;
         }
@@ -394,7 +428,8 @@ struct AllocatorList(Factory, BookkeepingAllocator = GCAllocator)
     $(D b) and calls $(D reallocate) for it. If that fails, calls the global
     $(D reallocate), which allocates a new block and moves memory.
     */
-    static if (hasMember!(Allocator, "reallocate"))
+    static if (hasMember!(Allocator, "reallocate")
+               && hasMember!(Allocator, "allocate"))
     bool reallocate(ref void[] b, size_t s)
     {
         // First attempt to reallocate within the existing node
@@ -409,6 +444,24 @@ struct AllocatorList(Factory, BookkeepingAllocator = GCAllocator)
         }
         // Failed, but we may find new memory in a new node.
         return .reallocate(this, b, s);
+    }
+
+    static if (hasMember!(Allocator, "reallocateGC")
+               && hasMember!(Allocator, "allocateGC"))
+    bool reallocate(ref void[] b, size_t s)
+    {
+        // First attempt to reallocate within the existing node
+        if (!b.ptr)
+        {
+            b = allocateGC(s);
+            return b.length == s;
+        }
+        for (auto p = &root, n = *p; n; p = &n.next, n = *p)
+        {
+            if (n.owns(b) == Ternary.yes) return n.reallocateGC(b, s);
+        }
+        // Failed, but we may find new memory in a new node.
+        return .reallocateGC(this, b, s);
     }
 
     /**

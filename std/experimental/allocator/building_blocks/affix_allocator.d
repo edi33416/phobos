@@ -119,10 +119,31 @@ struct AffixAllocator(Allocator, Prefix, Suffix = void)
                 [0 .. actualAllocationSize(b.length)];
         }
 
+        static if (hasMember!(Allocator, "allocate"))
         void[] allocate(size_t bytes)
         {
             if (!bytes) return null;
             auto result = parent.allocate(actualAllocationSize(bytes));
+            if (result is null) return null;
+            static if (stateSize!Prefix)
+            {
+                assert(result.ptr.alignedAt(Prefix.alignof));
+                emplace!Prefix(cast(Prefix*) result.ptr);
+            }
+            static if (stateSize!Suffix)
+            {
+                auto suffixP = result.ptr + result.length - Suffix.sizeof;
+                assert(suffixP.alignedAt(Suffix.alignof));
+                emplace!Suffix(cast(Suffix*)(suffixP));
+            }
+            return result[stateSize!Prefix .. stateSize!Prefix + bytes];
+        }
+
+        static if (hasMember!(Allocator, "allocateGC"))
+        void[] allocateGC(size_t bytes)
+        {
+            if (!bytes) return null;
+            auto result = parent.allocateGC(actualAllocationSize(bytes));
             if (result is null) return null;
             static if (stateSize!Prefix)
             {
@@ -199,7 +220,8 @@ struct AffixAllocator(Allocator, Prefix, Suffix = void)
             return true;
         }
 
-        static if (hasMember!(Allocator, "reallocate"))
+        static if (hasMember!(Allocator, "reallocate")
+                   && hasMember!(Allocator, "allocate"))
         bool reallocate(ref void[] b, size_t s)
         {
             if (b is null)
@@ -209,6 +231,22 @@ struct AffixAllocator(Allocator, Prefix, Suffix = void)
             }
             auto t = actualAllocation(b);
             const result = parent.reallocate(t, actualAllocationSize(s));
+            if (!result) return false; // no harm done
+            b = t.ptr[stateSize!Prefix .. stateSize!Prefix + s];
+            return true;
+        }
+
+        static if (hasMember!(Allocator, "reallocateGC")
+                   && hasMember!(Allocator, "allocateGC"))
+        bool reallocateGC(ref void[] b, size_t s)
+        {
+            if (b is null)
+            {
+                b = allocateGC(s);
+                return b.length == s;
+            }
+            auto t = actualAllocation(b);
+            const result = parent.reallocateGC(t, actualAllocationSize(s));
             if (!result) return false; // no harm done
             b = t.ptr[stateSize!Prefix .. stateSize!Prefix + s];
             return true;

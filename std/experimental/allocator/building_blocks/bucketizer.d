@@ -56,6 +56,7 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
     /**
     Directs the call to either one of the $(D buckets) allocators.
     */
+    static if (hasMember!(Allocator, "allocate"))
     void[] allocate(size_t bytes)
     {
         if (!bytes) return null;
@@ -63,6 +64,20 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
         {
             const actual = goodAllocSize(bytes);
             auto result = a.allocate(actual);
+            return result.ptr ? result.ptr[0 .. bytes] : null;
+        }
+        return null;
+    }
+
+    /// Ditto
+    static if (hasMember!(Allocator, "allocateGC"))
+    void[] allocateGC(size_t bytes)
+    {
+        if (!bytes) return null;
+        if (auto a = allocatorFor(bytes))
+        {
+            const actual = goodAllocSize(bytes);
+            auto result = a.allocateGC(actual);
             return result.ptr ? result.ptr[0 .. bytes] : null;
         }
         return null;
@@ -80,6 +95,20 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
         {
             const actual = goodAllocSize(bytes);
             auto result = a.alignedAllocate(actual);
+            return result.ptr ? result.ptr[0 .. bytes] : null;
+        }
+        return null;
+    }
+
+    /// Ditto
+    static if (hasMember!(Allocator, "alignedAllocateGC"))
+    void[] alignedAllocateGC(size_t bytes, uint a)
+    {
+        if (!bytes) return null;
+        if (auto a = allocatorFor(b.length))
+        {
+            const actual = goodAllocSize(bytes);
+            auto result = a.alignedAllocateGC(actual);
             return result.ptr ? result.ptr[0 .. bytes] : null;
         }
         return null;
@@ -107,6 +136,7 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
     step, min + (k + 1) * step - 1]), then reallocation is in place. Otherwise,
     reallocation with moving is attempted.
     */
+    static if (hasMember!(Allocator, "reallocate"))
     bool reallocate(ref void[] b, size_t size)
     {
         if (size == 0)
@@ -126,7 +156,33 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
             return true;
         }
         // Move cross buckets
+        // TODO is this ok?
         return common.reallocate(this, b, size);
+    }
+
+    /// Ditto
+    static if (hasMember!(Allocator, "reallocateGC"))
+    bool reallocateGC(ref void[] b, size_t size)
+    {
+        if (size == 0)
+        {
+            //deallocate(b);
+            b = null;
+            return true;
+        }
+        if (size >= b.length)
+        {
+            return expand(b, size - b.length);
+        }
+        assert(b.length >= min && b.length <= max);
+        if (goodAllocSize(size) == goodAllocSize(b.length))
+        {
+            b = b.ptr[0 .. size];
+            return true;
+        }
+        // Move cross buckets
+        // TODO is this ok?
+        return common.reallocateGC(this, b, size);
     }
 
     /**
@@ -154,6 +210,30 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
         }
         // Move cross buckets
         return .alignedReallocate(this, b, size, a);
+    }
+
+    /// Ditto
+    static if (hasMember!(Allocator, "alignedReallocateGC"))
+    bool alignedReallocateGC(ref void[] b, size_t size, uint a)
+    {
+        if (size == 0)
+        {
+            //deallocate(b);
+            b = null;
+            return true;
+        }
+        if (size >= b.length)
+        {
+            return expand(b, size - b.length);
+        }
+        assert(b.length >= min && b.length <= max);
+        if (goodAllocSize(size) == goodAllocSize(b.length))
+        {
+            b = b.ptr[0 .. size];
+            return true;
+        }
+        // Move cross buckets
+        return .alignedReallocateGC(this, b, size, a);
     }
 
     /**

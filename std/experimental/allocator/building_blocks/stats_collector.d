@@ -310,28 +310,67 @@ public:
         & (Options.numAllocate | Options.numAllocateOK
             | Options.bytesAllocated)))
     {
-        void[] allocate(size_t n)
-        { return allocateImpl(n); }
+        static if (hasMember!(Allocator, "allocate"))
+        {
+            void[] allocate(size_t n)
+            { return allocateImpl(n); }
+        }
+
+        static if (hasMember!(Allocator, "allocateGC"))
+        {
+            void[] allocateGC(size_t n)
+            { return allocateGCImpl(n); }
+        }
     }
     else
     {
-        void[] allocate(string f = __FILE__, ulong n = __LINE__)
-            (size_t bytes)
-        { return allocateImpl!(f, n)(bytes); }
+        static if (hasMember!(Allocator, "allocate"))
+        {
+            void[] allocate(string f = __FILE__, ulong n = __LINE__)
+                (size_t bytes)
+                { return allocateImpl!(f, n)(bytes); }
+        }
+
+        static if (hasMember!(Allocator, "allocateGC"))
+        {
+            void[] allocateGC(string f = __FILE__, ulong n = __LINE__)
+                (size_t bytes)
+                { return allocateGCImpl!(f, n)(bytes); }
+        }
     }
 
-    private void[] allocateImpl(string f = null, ulong n = 0)(size_t bytes)
+    static if (hasMember!(Allocator, "allocate"))
     {
-        auto result = parent.allocate(bytes);
-        add!"bytesUsed"(result.length);
-        add!"bytesAllocated"(result.length);
-        immutable slack = this.goodAllocSize(result.length) - result.length;
-        add!"bytesSlack"(slack);
-        up!"numAllocate";
-        add!"numAllocateOK"(result.length == bytes); // allocating 0 bytes is OK
-        addPerCall!(f, n, "numAllocate", "numAllocateOK", "bytesAllocated")
-            (1, result.length == bytes, result.length);
-        return result;
+        private void[] allocateImpl(string f = null, ulong n = 0)(size_t bytes)
+        {
+            auto result = parent.allocate(bytes);
+            add!"bytesUsed"(result.length);
+            add!"bytesAllocated"(result.length);
+            immutable slack = this.goodAllocSize(result.length) - result.length;
+            add!"bytesSlack"(slack);
+            up!"numAllocate";
+            add!"numAllocateOK"(result.length == bytes); // allocating 0 bytes is OK
+            addPerCall!(f, n, "numAllocate", "numAllocateOK", "bytesAllocated")
+                (1, result.length == bytes, result.length);
+            return result;
+        }
+    }
+
+    static if (hasMember!(Allocator, "allocateGC"))
+    {
+        private void[] allocateGCImpl(string f = null, ulong n = 0)(size_t bytes)
+        {
+            auto result = parent.allocateGC(bytes);
+            add!"bytesUsed"(result.length);
+            add!"bytesAllocated"(result.length);
+            immutable slack = this.goodAllocSize(result.length) - result.length;
+            add!"bytesSlack"(slack);
+            up!"numAllocate";
+            add!"numAllocateOK"(result.length == bytes); // allocating 0 bytes is OK
+            addPerCall!(f, n, "numAllocate", "numAllocateOK", "bytesAllocated")
+                (1, result.length == bytes, result.length);
+            return result;
+        }
     }
 
     /**
@@ -399,69 +438,149 @@ public:
             | Options.bytesExpanded | Options.bytesContracted
             | Options.bytesMoved)))
     {
-        bool reallocate(ref void[] b, size_t s)
-        { return reallocateImpl(b, s); }
+        static if (hasMember!(Allocator, "reallocate"))
+        {
+            bool reallocate(ref void[] b, size_t s)
+            { return reallocateImpl(b, s); }
+        }
+
+        static if (hasMember!(Allocator, "reallocateGC"))
+        {
+            bool reallocateGC(ref void[] b, size_t s)
+            { return reallocateGCImpl(b, s); }
+        }
     }
     else
     {
-        bool reallocate(string f = __FILE__, ulong n = __LINE__)
-            (ref void[] b, size_t s)
-        { return reallocateImpl!(f, n)(b, s); }
+        static if (hasMember!(Allocator, "reallocate"))
+        {
+            bool reallocate(string f = __FILE__, ulong n = __LINE__)
+                (ref void[] b, size_t s)
+                { return reallocateImpl!(f, n)(b, s); }
+        }
+
+        static if (hasMember!(Allocator, "reallocateGC"))
+        {
+            bool reallocateGC(string f = __FILE__, ulong n = __LINE__)
+                (ref void[] b, size_t s)
+                { return reallocateGCImpl!(f, n)(b, s); }
+        }
     }
 
-    private bool reallocateImpl(string f = null, uint n = 0)
-        (ref void[] b, size_t s)
+    static if (hasMember!(Allocator, "reallocate"))
     {
-        up!"numReallocate";
-        const bytesSlackB4 = this.goodAllocSize(b.length) - b.length;
-        const oldB = b.ptr;
-        const oldLength = b.length;
-
-        const result = parent.reallocate(b, s);
-
-        Signed!size_t slack = 0;
-        bool wasInPlace = false;
-        Signed!size_t delta = 0;
-
-        if (result)
-        {
-            up!"numReallocateOK";
-            slack = (this.goodAllocSize(b.length) - b.length) - bytesSlackB4;
-            add!"bytesSlack"(slack);
-            add!"bytesUsed"(Signed!size_t(b.length - oldLength));
-            if (oldB == b.ptr)
+        private bool reallocateImpl(string f = null, uint n = 0)
+            (ref void[] b, size_t s)
             {
-                // This was an in-place reallocation, yay
-                wasInPlace = true;
-                up!"numReallocateInPlace";
-                add!"bytesNotMoved"(oldLength);
-                delta = b.length - oldLength;
-                if (delta >= 0)
+                up!"numReallocate";
+                const bytesSlackB4 = this.goodAllocSize(b.length) - b.length;
+                const oldB = b.ptr;
+                const oldLength = b.length;
+
+                const result = parent.reallocate(b, s);
+
+                Signed!size_t slack = 0;
+                bool wasInPlace = false;
+                Signed!size_t delta = 0;
+
+                if (result)
                 {
-                    // Expansion
-                    add!"bytesAllocated"(delta);
-                    add!"bytesExpanded"(delta);
+                    up!"numReallocateOK";
+                    slack = (this.goodAllocSize(b.length) - b.length) - bytesSlackB4;
+                    add!"bytesSlack"(slack);
+                    add!"bytesUsed"(Signed!size_t(b.length - oldLength));
+                    if (oldB == b.ptr)
+                    {
+                        // This was an in-place reallocation, yay
+                        wasInPlace = true;
+                        up!"numReallocateInPlace";
+                        add!"bytesNotMoved"(oldLength);
+                        delta = b.length - oldLength;
+                        if (delta >= 0)
+                        {
+                            // Expansion
+                            add!"bytesAllocated"(delta);
+                            add!"bytesExpanded"(delta);
+                        }
+                        else
+                        {
+                            // Contraction
+                            add!"bytesContracted"(-delta);
+                        }
+                    }
+                    else
+                    {
+                        // This was a allocate-move-deallocate cycle
+                        add!"bytesAllocated"(b.length);
+                        add!"bytesMoved"(oldLength);
+                    }
                 }
-                else
-                {
-                    // Contraction
-                    add!"bytesContracted"(-delta);
-                }
+                addPerCall!(f, n, "numReallocate", "numReallocateOK",
+                        "numReallocateInPlace", "bytesNotMoved",
+                        "bytesExpanded", "bytesContracted", "bytesMoved")
+                    (1, result, wasInPlace, wasInPlace ? oldLength : 0,
+                     delta >= 0 ? delta : 0, delta < 0 ? -delta : 0,
+                     wasInPlace ? 0 : oldLength);
+                return result;
             }
-            else
+    }
+
+    static if (hasMember!(Allocator, "reallocateGC"))
+    {
+        private bool reallocateGCImpl(string f = null, uint n = 0)
+            (ref void[] b, size_t s)
             {
-                // This was a allocate-move-deallocate cycle
-                add!"bytesAllocated"(b.length);
-                add!"bytesMoved"(oldLength);
+                up!"numReallocate";
+                const bytesSlackB4 = this.goodAllocSize(b.length) - b.length;
+                const oldB = b.ptr;
+                const oldLength = b.length;
+
+                const result = parent.reallocateGC(b, s);
+
+                Signed!size_t slack = 0;
+                bool wasInPlace = false;
+                Signed!size_t delta = 0;
+
+                if (result)
+                {
+                    up!"numReallocateOK";
+                    slack = (this.goodAllocSize(b.length) - b.length) - bytesSlackB4;
+                    add!"bytesSlack"(slack);
+                    add!"bytesUsed"(Signed!size_t(b.length - oldLength));
+                    if (oldB == b.ptr)
+                    {
+                        // This was an in-place reallocation, yay
+                        wasInPlace = true;
+                        up!"numReallocateInPlace";
+                        add!"bytesNotMoved"(oldLength);
+                        delta = b.length - oldLength;
+                        if (delta >= 0)
+                        {
+                            // Expansion
+                            add!"bytesAllocated"(delta);
+                            add!"bytesExpanded"(delta);
+                        }
+                        else
+                        {
+                            // Contraction
+                            add!"bytesContracted"(-delta);
+                        }
+                    }
+                    else
+                    {
+                        // This was a allocate-move-deallocate cycle
+                        add!"bytesAllocated"(b.length);
+                        add!"bytesMoved"(oldLength);
+                    }
+                }
+                addPerCall!(f, n, "numReallocate", "numReallocateOK",
+                        "numReallocateInPlace", "bytesNotMoved",
+                        "bytesExpanded", "bytesContracted", "bytesMoved")
+                    (1, result, wasInPlace, wasInPlace ? oldLength : 0,
+                     delta >= 0 ? delta : 0, delta < 0 ? -delta : 0,
+                     wasInPlace ? 0 : oldLength);
+                return result;
             }
-        }
-        addPerCall!(f, n, "numReallocate", "numReallocateOK",
-            "numReallocateInPlace", "bytesNotMoved",
-            "bytesExpanded", "bytesContracted", "bytesMoved")
-            (1, result, wasInPlace, wasInPlace ? oldLength : 0,
-                delta >= 0 ? delta : 0, delta < 0 ? -delta : 0,
-                wasInPlace ? 0 : oldLength);
-        return result;
     }
 
     /**

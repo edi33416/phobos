@@ -298,15 +298,29 @@ interface IAllocator
     size_t goodAllocSize(size_t s);
 
     /**
-    Allocates `n` bytes of memory.
+    Allocates `n` bytes of memory without creating garbage. Implementations
+    that do not support this primitive should always return `null`.
     */
     void[] allocate(size_t, TypeInfo ti = null);
 
     /**
-    Allocates `n` bytes of memory with specified alignment `a`. Implementations
-    that do not support this primitive should always return `null`.
+    Allocates `n` bytes of memory with specified alignment `a` without creating
+    garbage. Implementations that do not support this primitive should always
+    return `null`.
     */
     void[] alignedAllocate(size_t n, uint a);
+
+    /**
+    Allocates `n` bytes of memory using the `GC`.
+    Implementations that do not support this primitive should always return `null`.
+    */
+    void[] allocateGC(size_t, TypeInfo ti = null);
+
+    /**
+    Allocates `n` bytes of memory with specified alignment `a` using the `GC`.
+    Implementations that do not support this primitive should always return `null`.
+    */
+    void[] alignedAllocateGC(size_t n, uint a);
 
     /**
     Allocates and returns all memory available to this allocator.
@@ -322,11 +336,29 @@ interface IAllocator
     */
     bool expand(ref void[], size_t);
 
-    /// Reallocates a memory block.
+    /**
+    Reallocates a memory block without creating garbage.
+    Implementations that do not support this primitive should always return `null`.
+    */
     bool reallocate(ref void[], size_t);
 
-    /// Reallocates a memory block with specified alignment.
+    /**
+    Reallocates a memory block with specified `alignment` without creating garbage.
+    Implementations that do not support this primitive should always return `null`.
+    */
     bool alignedReallocate(ref void[] b, size_t size, uint alignment);
+
+    /**
+    Reallocates a memory block using the `GC`.
+    Implementations that do not support this primitive should always return `null`.
+    */
+    bool reallocateGC(ref void[], size_t);
+
+    /**
+    Reallocates a memory block with specified `alignment` using the `GC`.
+    Implementations that do not support this primitive should always return `null`.
+    */
+    bool alignedReallocateGC(ref void[] b, size_t size, uint alignment);
 
     /**
     Returns $(D Ternary.yes) if the allocator owns $(D b), $(D Ternary.no) if
@@ -394,15 +426,29 @@ interface ISharedAllocator
     size_t goodAllocSize(size_t s) shared;
 
     /**
-    Allocates `n` bytes of memory.
+    Allocates `n` bytes of memory without creating garbage.
+    Implementations that do not support this primitive should always return `null`.
     */
     void[] allocate(size_t, TypeInfo ti = null) shared;
 
     /**
-    Allocates `n` bytes of memory with specified alignment `a`. Implementations
-    that do not support this primitive should always return `null`.
+    Allocates `n` bytes of memory with specified alignment `a` without creating
+    garbage. Implementations that do not support this primitive should always
+    return `null`.
     */
     void[] alignedAllocate(size_t n, uint a) shared;
+
+    /**
+    Allocates `n` bytes of memory using the `GC`.
+    Implementations that do not support this primitive should always return `null`.
+    */
+    void[] allocateGC(size_t, TypeInfo ti = null) shared;
+
+    /**
+    Allocates `n` bytes of memory with specified alignment `a` using the `GC`.
+    Implementations that do not support this primitive should always return `null`.
+    */
+    void[] alignedAllocateGC(size_t n, uint a) shared;
 
     /**
     Allocates and returns all memory available to this allocator.
@@ -418,11 +464,29 @@ interface ISharedAllocator
     */
     bool expand(ref void[], size_t) shared;
 
-    /// Reallocates a memory block.
+    /**
+    Reallocates a memory block without creating garbage.
+    Implementations that do not support this primitive should always return `null`.
+    */
     bool reallocate(ref void[], size_t) shared;
 
-    /// Reallocates a memory block with specified alignment.
+    /**
+    Reallocates a memory block with specified `alignment` without creating garbage.
+    Implementations that do not support this primitive should always return `null`.
+    */
     bool alignedReallocate(ref void[] b, size_t size, uint alignment) shared;
+
+    /**
+    Reallocates a memory block using the `GC`.
+    Implementations that do not support this primitive should always return `null`.
+    */
+    bool reallocateGC(ref void[], size_t) shared;
+
+    /**
+    Reallocates a memory block with specified `alignment` using the `GC`.
+    Implementations that do not support this primitive should always return `null`.
+    */
+    bool alignedReallocateGC(ref void[] b, size_t size, uint alignment) shared;
 
     /**
     Returns $(D Ternary.yes) if the allocator owns $(D b), $(D Ternary.no) if
@@ -496,6 +560,16 @@ static this()
             return _processAllocator.alignedAllocate(n, a);
         }
 
+        override void[] allocateGC(size_t n, TypeInfo ti = null)
+        {
+            return _processAllocator.allocateGC(n, ti);
+        }
+
+        override void[] alignedAllocateGC(size_t n, uint a)
+        {
+            return _processAllocator.alignedAllocateGC(n, a);
+        }
+
         override void[] allocateAll()
         {
             return _processAllocator.allocateAll();
@@ -514,6 +588,16 @@ static this()
         override bool alignedReallocate(ref void[] b, size_t size, uint alignment)
         {
             return _processAllocator.alignedReallocate(b, size, alignment);
+        }
+
+        override bool reallocateGC(ref void[] b, size_t size)
+        {
+            return _processAllocator.reallocateGC(b, size);
+        }
+
+        override bool alignedReallocateGC(ref void[] b, size_t size, uint alignment)
+        {
+            return _processAllocator.alignedReallocateGC(b, size, alignment);
         }
 
         override Ternary owns(void[] b)
@@ -2164,21 +2248,49 @@ class CAllocatorImpl(Allocator, Flag!"indirect" indirect = No.indirect)
     }
 
     /**
-    Returns `impl.allocate(s)`.
+    If `impl.allocate` exists, calls it and returns the result,
+    otherwise, always returns `null`.
     */
     override void[] allocate(size_t s, TypeInfo ti = null)
     {
-        return impl.allocate(s);
+        static if (hasMember!(Allocator, "allocate"))
+            return impl.allocate(s);
+        else
+            return null;
     }
 
     /**
-    If `impl.alignedAllocate` exists, calls it and returns the result.
-    Otherwise, always returns `null`.
+    If `impl.alignedAllocate` exists, calls it and returns the result,
+    otherwise, always returns `null`.
     */
     override void[] alignedAllocate(size_t s, uint a)
     {
         static if (hasMember!(Allocator, "alignedAllocate"))
             return impl.alignedAllocate(s, a);
+        else
+            return null;
+    }
+
+    /**
+    If `impl.allocateGC` exists, calls it and returns the result,
+    otherwise, always returns `null`.
+    */
+    override void[] allocateGC(size_t s, TypeInfo ti = null)
+    {
+        static if (hasMember!(Allocator, "allocateGC"))
+            return impl.allocateGC(s);
+        else
+            return null;
+    }
+
+    /**
+    If `impl.alignedAllocateGC` exists, calls it and returns the result,
+    otherwise, always returns `null`.
+    */
+    override void[] alignedAllocateGC(size_t s, uint a)
+    {
+        static if (hasMember!(Allocator, "alignedAllocateGC"))
+            return impl.alignedAllocateGC(s, a);
         else
             return null;
     }
@@ -2202,23 +2314,40 @@ class CAllocatorImpl(Allocator, Flag!"indirect" indirect = No.indirect)
             return s == 0;
     }
 
-    /// Returns $(D impl.reallocate(b, s)).
+    /// Forwards to `impl.reallocate` if defined, `false` otherwise.
     override bool reallocate(ref void[] b, size_t s)
     {
-        return impl.reallocate(b, s);
+        static if (hasMember!(Allocator, "reallocate"))
+            return impl.reallocate(b, s);
+        else
+            return false;
     }
 
     /// Forwards to `impl.alignedReallocate` if defined, `false` otherwise.
-    bool alignedReallocate(ref void[] b, size_t s, uint a)
+    override bool alignedReallocate(ref void[] b, size_t s, uint a)
     {
-        static if (!hasMember!(Allocator, "alignedAllocate"))
-        {
-            return false;
-        }
-        else
-        {
+        static if (hasMember!(Allocator, "alignedReallocate"))
             return impl.alignedReallocate(b, s, a);
-        }
+        else
+            return false;
+    }
+
+    /// Forwards to `impl.reallocateGC` if defined, `false` otherwise.
+    override bool reallocateGC(ref void[] b, size_t s)
+    {
+        static if (hasMember!(Allocator, "reallocateGC"))
+            return impl.reallocateGC(b, s);
+        else
+            return false;
+    }
+
+    /// Forwards to `impl.alignedReallocateGC` if defined, `false` otherwise.
+    override bool alignedReallocateGC(ref void[] b, size_t s, uint a)
+    {
+        static if (hasMember!(Allocator, "alignedReallocateGC"))
+            return impl.alignedReallocateGC(b, s, a);
+        else
+            return false;
     }
 
     // Undocumented for now
@@ -2347,21 +2476,49 @@ class CSharedAllocatorImpl(Allocator, Flag!"indirect" indirect = No.indirect)
     }
 
     /**
-    Returns `impl.allocate(s)`.
+    If `impl.allocate` exists, calls it and returns the result,
+    otherwise, always returns `null`.
     */
     override void[] allocate(size_t s, TypeInfo ti = null) shared
     {
-        return impl.allocate(s);
+        static if (hasMember!(Allocator, "allocate"))
+            return impl.allocate(s);
+        else
+            return null;
     }
 
     /**
-    If `impl.alignedAllocate` exists, calls it and returns the result.
-    Otherwise, always returns `null`.
+    If `impl.alignedAllocate` exists, calls it and returns the result,
+    otherwise, always returns `null`.
     */
     override void[] alignedAllocate(size_t s, uint a) shared
     {
         static if (hasMember!(Allocator, "alignedAllocate"))
             return impl.alignedAllocate(s, a);
+        else
+            return null;
+    }
+
+    /**
+    If `impl.allocateGC` exists, calls it and returns the result,
+    otherwise, always returns `null`.
+    */
+    override void[] allocateGC(size_t s, TypeInfo ti = null) shared
+    {
+        static if (hasMember!(Allocator, "allocateGC"))
+            return impl.allocateGC(s);
+        else
+            return null;
+    }
+
+    /**
+    If `impl.alignedAllocateGC` exists, calls it and returns the result,
+    otherwise, always returns `null`.
+    */
+    override void[] alignedAllocateGC(size_t s, uint a) shared
+    {
+        static if (hasMember!(Allocator, "alignedAllocateGC"))
+            return impl.alignedAllocateGC(s, a);
         else
             return null;
     }
@@ -2385,16 +2542,19 @@ class CSharedAllocatorImpl(Allocator, Flag!"indirect" indirect = No.indirect)
             return s == 0;
     }
 
-    /// Returns $(D impl.reallocate(b, s)).
+    /// Forwards to `impl.reallocate` if defined, `false` otherwise.
     override bool reallocate(ref void[] b, size_t s) shared
     {
-        return impl.reallocate(b, s);
+        static if (hasMember!(Allocator, "reallocate"))
+            return impl.reallocate(b, s);
+        else
+            return false;
     }
 
     /// Forwards to `impl.alignedReallocate` if defined, `false` otherwise.
-    bool alignedReallocate(ref void[] b, size_t s, uint a) shared
+    override bool alignedReallocate(ref void[] b, size_t s, uint a) shared
     {
-        static if (!hasMember!(Allocator, "alignedAllocate"))
+        static if (!hasMember!(Allocator, "alignedReallocate"))
         {
             return false;
         }
@@ -2402,6 +2562,24 @@ class CSharedAllocatorImpl(Allocator, Flag!"indirect" indirect = No.indirect)
         {
             return impl.alignedReallocate(b, s, a);
         }
+    }
+
+    /// Forwards to `impl.reallocateGC` if defined, `false` otherwise.
+    override bool reallocateGC(ref void[] b, size_t s) shared
+    {
+        static if (hasMember!(Allocator, "reallocateGC"))
+            return impl.reallocateGC(b, s);
+        else
+            return false;
+    }
+
+    /// Forwards to `impl.alignedReallocateGC` if defined, `false` otherwise.
+    override bool alignedReallocateGC(ref void[] b, size_t s, uint a) shared
+    {
+        static if (hasMember!(Allocator, "alignedReallocateGC"))
+            return impl.alignedReallocateGC(b, s, a);
+        else
+            return false;
     }
 
     // Undocumented for now

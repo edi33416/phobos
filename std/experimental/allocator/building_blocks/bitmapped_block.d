@@ -189,7 +189,14 @@ struct BitmappedBlock(size_t theBlockSize, uint theAlignment = platformAlignment
     this(size_t capacity)
     {
         size_t toAllocate = totalAllocation(capacity);
-        auto data = cast(ubyte[])(parent.allocate(toAllocate));
+        static if (hasMember!(ParentAllocator, "allocate"))
+        {
+            auto data = cast(ubyte[])(parent.allocate(toAllocate));
+        }
+        else
+        {
+            auto data = cast(ubyte[])(parent.allocateGC(toAllocate));
+        }
         this(data);
         assert(_blocks * blockSize >= capacity);
     }
@@ -199,11 +206,19 @@ struct BitmappedBlock(size_t theBlockSize, uint theAlignment = platformAlignment
     deallocate), the destructor is defined to deallocate the block held.
     */
     static if (!is(ParentAllocator == NullAllocator)
-        && hasMember!(ParentAllocator, "deallocate"))
+        && (hasMember!(ParentAllocator, "deallocate")
+            || hasMember!(ParentAllocator, "deallocateGC")))
     ~this()
     {
         auto start = _control.rep.ptr, end = _payload.ptr + _payload.length;
-        parent.deallocate(start[0 .. end - start]);
+        static if (hasMember!(ParentAllocator, "deallocate"))
+        {
+            parent.deallocate(start[0 .. end - start]);
+        }
+        else
+        {
+            parent.deallocateGC(start[0 .. end - start]);
+        }
     }
 
     /*

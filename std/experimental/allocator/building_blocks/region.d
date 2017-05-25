@@ -85,7 +85,14 @@ struct Region(ParentAllocator = NullAllocator,
     static if (!is(ParentAllocator == NullAllocator))
     this(size_t n)
     {
-        this(cast(ubyte[])(parent.allocate(n.roundUpToAlignment(alignment))));
+        static if (hasMember!(ParentAllocator, "allocate"))
+        {
+            this(cast(ubyte[])(parent.allocate(n.roundUpToAlignment(alignment))));
+        }
+        else
+        {
+            this(cast(ubyte[])(parent.allocateGC(n.roundUpToAlignment(alignment))));
+        }
     }
 
     /*

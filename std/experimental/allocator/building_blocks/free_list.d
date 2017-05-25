@@ -252,6 +252,7 @@ struct FreeList(ParentAllocator,
         return parent.goodAllocSize(bytes);
     }
 
+    static if (hasMember!(ParentAllocator, "allocate"))
     private void[] allocateEligible(size_t bytes)
     {
         assert(bytes);
@@ -273,6 +274,42 @@ struct FreeList(ParentAllocator,
         }
         assert(toAllocate == max || max == unbounded);
         auto result = parent.allocate(toAllocate);
+
+        static if (hasTolerance)
+        {
+            if (result) result = result.ptr[0 .. bytes];
+        }
+        static if (adaptive == Yes.adaptive)
+        {
+            ++accumMisses;
+            updateStats;
+        }
+        return result;
+    }
+
+    static if (hasMember!(ParentAllocator, "allocateGC"))
+    private void[] allocateEligibleGC(size_t bytes)
+    {
+        assert(bytes);
+        if (root)
+        {
+            // faster
+            auto result = (cast(ubyte*) root)[0 .. bytes];
+            root = root.next;
+            return result;
+        }
+        // slower
+        static if (hasTolerance)
+        {
+            immutable toAllocate = max;
+        }
+        else
+        {
+            alias toAllocate = bytes;
+        }
+        assert(toAllocate == max || max == unbounded);
+        auto result = parent.allocateGC(toAllocate);
+
         static if (hasTolerance)
         {
             if (result) result = result.ptr[0 .. bytes];
@@ -305,6 +342,7 @@ struct FreeList(ParentAllocator,
 
     Postcondition: $(D result.length == bytes || result is null)
     */
+    static if (hasMember!(ParentAllocator, "allocate"))
     void[] allocate(size_t n)
     {
         static if (adaptive == Yes.adaptive) ++accumSamples;
@@ -322,9 +360,28 @@ struct FreeList(ParentAllocator,
         return parent.allocate(n);
     }
 
+    /// Ditto
+    static if (hasMember!(ParentAllocator, "allocateGC"))
+    void[] allocateGC(size_t n)
+    {
+        static if (adaptive == Yes.adaptive) ++accumSamples;
+        assert(n < size_t.max / 2);
+        // fast path
+        if (freeListEligible(n))
+        {
+            return allocateEligibleGC(n);
+        }
+        // slower
+        static if (adaptive == Yes.adaptive)
+        {
+            updateStats;
+        }
+        return parent.allocateGC(n);
+    }
+
     // Forwarding methods
     mixin(forwardToMember("parent",
-        "expand", "owns", "reallocate"));
+        "expand", "owns", "reallocate", "reallocateGC"));
 
     /**
     If $(D block.length) is within $(D [min, max]) or if the free list is
@@ -514,14 +571,28 @@ struct ContiguousFreeList(ParentAllocator,
     static if (!stateSize!ParentAllocator)
     this(size_t bytes)
     {
-        initialize(cast(ubyte[])(ParentAllocator.instance.allocate(bytes)));
+        static if (hasMember!(ParentAllocator, "allocate"))
+        {
+            initialize(cast(ubyte[])(ParentAllocator.instance.allocate(bytes)));
+        }
+        else
+        {
+            initialize(cast(ubyte[])(ParentAllocator.instance.allocateGC(bytes)));
+        }
     }
 
     /// ditto
     static if (stateSize!ParentAllocator)
     this(ParentAllocator parent, size_t bytes)
     {
-        initialize(cast(ubyte[])(parent.allocate(bytes)));
+        static if (hasMember!(ParentAllocator, "allocate"))
+        {
+            initialize(cast(ubyte[])(parent.allocate(bytes)));
+        }
+        else
+        {
+            initialize(cast(ubyte[])(parent.allocateGC(bytes)));
+        }
         this.parent = SParent(parent);
     }
 
@@ -532,7 +603,14 @@ struct ContiguousFreeList(ParentAllocator,
     {
         static if (maxSize == chooseAtRuntime) fl.max = max;
         static if (minSize == chooseAtRuntime) fl.min = max;
-        initialize(cast(ubyte[])(parent.allocate(bytes)), max);
+        static if (hasMember!(ParentAllocator, "allocate"))
+        {
+            initialize(cast(ubyte[])(parent.allocate(bytes)), max);
+        }
+        else
+        {
+            initialize(cast(ubyte[])(parent.allocateGC(bytes)), max);
+        }
     }
 
     /// ditto
@@ -542,7 +620,14 @@ struct ContiguousFreeList(ParentAllocator,
     {
         static if (maxSize == chooseAtRuntime) fl.max = max;
         static if (minSize == chooseAtRuntime) fl.min = max;
-        initialize(cast(ubyte[])(parent.allocate(bytes)), max);
+        static if (hasMember!(ParentAllocator, "allocate"))
+        {
+            initialize(cast(ubyte[])(parent.allocate(bytes)), max);
+        }
+        else
+        {
+            initialize(cast(ubyte[])(parent.allocateGC(bytes)), max);
+        }
         this.parent = SParent(parent);
     }
 
@@ -554,7 +639,14 @@ struct ContiguousFreeList(ParentAllocator,
     {
         static if (maxSize == chooseAtRuntime) fl.max = max;
         fl.min = min;
-        initialize(cast(ubyte[])(parent.allocate(bytes)), max);
+        static if (hasMember!(ParentAllocator, "allocate"))
+        {
+            initialize(cast(ubyte[])(parent.allocate(bytes)), max);
+        }
+        else
+        {
+            initialize(cast(ubyte[])(parent.allocateGC(bytes)), max);
+        }
         static if (stateSize!ParentAllocator)
             this.parent = SParent(parent);
     }
@@ -567,7 +659,14 @@ struct ContiguousFreeList(ParentAllocator,
     {
         static if (maxSize == chooseAtRuntime) fl.max = max;
         fl.min = min;
-        initialize(cast(ubyte[])(parent.allocate(bytes)), max);
+        static if (hasMember!(ParentAllocator, "allocate"))
+        {
+            initialize(cast(ubyte[])(parent.allocate(bytes)), max);
+        }
+        else
+        {
+            initialize(cast(ubyte[])(parent.allocateGC(bytes)), max);
+        }
         static if (stateSize!ParentAllocator)
             this.parent = SParent(parent);
     }
@@ -594,6 +693,7 @@ struct ContiguousFreeList(ParentAllocator,
     freelist is not empty, pops the memory off the free list. In all other
     cases, uses the parent allocator.
     */
+    static if (hasMember!(ParentAllocator, "allocate"))
     void[] allocate(size_t n)
     {
         auto result = fl.allocate(n);
@@ -605,6 +705,22 @@ struct ContiguousFreeList(ParentAllocator,
         }
         // All others, allocate from parent
         return parent.allocate(n);
+    }
+
+    static if (hasMember!(ParentAllocator, "allocateGC"))
+    void[] allocateGC(size_t n)
+    {
+        // TODO should this call GC?
+        //auto result = fl.allocateGC(n);
+        auto result = fl.allocate(n);
+        if (result)
+        {
+            // Only case we care about: eligible sizes allocated from us
+            ++allocated;
+            return result;
+        }
+        // All others, allocate from parent
+        return parent.allocateGC(n);
     }
 
     /**
@@ -644,7 +760,10 @@ struct ContiguousFreeList(ParentAllocator,
             fl.root.next = t;
             return true;
         }
-        return parent.deallocate(b);
+        static if (hasMember!(ParentAllocator, "deallocate"))
+        {
+            return parent.deallocate(b);
+        }
     }
 
     /**
@@ -972,10 +1091,21 @@ struct SharedFreeList(ParentAllocator,
     }
 
     /// Ditto
+    static if (hasMember!(ParentAllocator, "reallocateGC"))
+    bool reallocateGC(ref void[] b, size_t s) shared
+    {
+        return parent.reallocateGC(b, s);
+    }
+
+    /// Ditto
+    static if (hasMember!(ParentAllocator, "allocate"))
     void[] allocate(size_t bytes) shared
     {
         assert(bytes < size_t.max / 2);
-        if (!freeListEligible(bytes)) return parent.allocate(bytes);
+        if (!freeListEligible(bytes))
+        {
+            return parent.allocate(bytes);
+        }
         if (maxSize != unbounded) bytes = max;
 
         // Try to pop off the freelist
@@ -995,10 +1125,46 @@ struct SharedFreeList(ParentAllocator,
         }
     }
 
+    /// Ditto
+    static if (hasMember!(ParentAllocator, "allocateGC"))
+    void[] allocateGC(size_t bytes) shared
+    {
+        assert(bytes < size_t.max / 2);
+        if (!freeListEligible(bytes))
+        {
+            return parent.allocateGC(bytes);
+        }
+        if (maxSize != unbounded) bytes = max;
+
+        // Try to pop off the freelist
+        lock.lock();
+        if (!_root)
+        {
+            lock.unlock();
+            return allocateFreshGC(bytes);
+        }
+        else
+        {
+            auto oldRoot = _root;
+            _root = _root.next;
+            decNodes();
+            lock.unlock();
+            return (cast(ubyte*) oldRoot)[0 .. bytes];
+        }
+    }
+
+    static if (hasMember!(ParentAllocator, "allocate"))
     private void[] allocateFresh(const size_t bytes) shared
     {
         assert(bytes == max || max == unbounded);
         return parent.allocate(bytes);
+    }
+
+    static if (hasMember!(ParentAllocator, "allocateGC"))
+    private void[] allocateGCFresh(const size_t bytes) shared
+    {
+        assert(bytes == max || max == unbounded);
+        return parent.allocateGC(bytes);
     }
 
     /// Ditto
@@ -1036,8 +1202,7 @@ struct SharedFreeList(ParentAllocator,
             for (auto n = _root; n;)
             {
                 auto tmp = n.next;
-                if (!parent.deallocate((cast(ubyte*) n)[0 .. max]))
-                    result = false;
+                if(!parent.deallocate((cast(ubyte*) n)[0 .. max])) result = false;
                 n = tmp;
             }
         }

@@ -81,6 +81,7 @@ struct ScopedAllocator(ParentAllocator)
     Allocates memory. For management it actually allocates extra memory from
     the parent.
     */
+    static if (hasMember!(ParentAllocator, "allocate"))
     void[] allocate(size_t n)
     {
         auto b = parent.allocate(n);
@@ -94,6 +95,23 @@ struct ScopedAllocator(ParentAllocator)
         root = toInsert;
         return b;
     }
+
+    /// Ditto
+    static if (hasMember!(ParentAllocator, "allocateGC"))
+    void[] allocateGC(size_t n)
+    {
+        auto b = parent.allocateGC(n);
+        if (!b.ptr) return b;
+        Node* toInsert = & parent.prefix(b);
+        toInsert.prev = null;
+        toInsert.next = root;
+        toInsert.length = n;
+        assert(!root || !root.prev);
+        if (root) root.prev = toInsert;
+        root = toInsert;
+        return b;
+    }
+
 
     /**
     Forwards to $(D parent.expand(b, delta)).

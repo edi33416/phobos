@@ -263,15 +263,19 @@ struct FreeTree(ParentAllocator)
     Returns $(D parent.goodAllocSize(max(Node.sizeof, s))).
     */
     static if (stateSize!ParentAllocator)
+    {
         size_t goodAllocSize(size_t s)
         {
             return parent.goodAllocSize(max(Node.sizeof, s));
         }
+    }
     else
+    {
         static size_t goodAllocSize(size_t s)
         {
             return parent.goodAllocSize(max(Node.sizeof, s));
         }
+    }
 
     /**
 
@@ -285,6 +289,7 @@ struct FreeTree(ParentAllocator)
     TODO: Splitting and coalescing should be implemented if $(D ParentAllocator) does not defined $(D deallocate).
 
     */
+    static if (hasMember!(ParentAllocator, "allocate"))
     void[] allocate(size_t n)
     {
         assertValid;
@@ -316,9 +321,42 @@ struct FreeTree(ParentAllocator)
         }
     }
 
+    /// Ditto
+    static if (hasMember!(ParentAllocator, "allocateGC"))
+    void[] allocateGC(size_t n)
+    {
+        assertValid;
+        if (n == 0) return null;
+
+        immutable s = goodAllocSize(n);
+
+        // Consult the free tree.
+        auto result = findAndRemove(root, s);
+        if (result.ptr) return result.ptr[0 .. n];
+
+        // No block found, try the parent allocator.
+        result = parent.allocateGC(s);
+        if (result.ptr) return result.ptr[0 .. n];
+
+        // Parent ran out of juice, desperation mode on
+        static if (hasMember!(ParentAllocator, "deallocate"))
+        {
+            clear; // TODO
+            // Try parent allocator again.
+            result = parent.allocateGC(s);
+            if (result.ptr) return result.ptr[0 .. n];
+            return null;
+        }
+        else
+        {
+            // TODO: get smart here
+            return null;
+        }
+    }
+
     // Forwarding methods
     mixin(forwardToMember("parent",
-        "allocateAll", "expand", "owns", "reallocate"));
+        "allocateAll", "expand", "owns", "reallocate", "reallocateGC"));
 
     /** Places $(D b) into the free tree. */
     bool deallocate(void[] b)
