@@ -363,6 +363,243 @@ interface IAllocator
     Ternary empty();
 }
 
+interface ISafeAllocator : IAllocator
+{
+    /**
+    Returns the alignment offered.
+    */
+    @property uint alignment() @safe;
+
+    /**
+    Returns the good allocation size that guarantees zero internal
+    fragmentation.
+    */
+    size_t goodAllocSize(size_t s) @safe;
+
+    /**
+    Allocates `n` bytes of memory.
+    */
+    void[] allocate(size_t, TypeInfo ti = null) @safe;
+
+    /**
+    Allocates `n` bytes of memory with specified alignment `a`. Implementations
+    that do not support this primitive should always return `null`.
+    */
+    void[] alignedAllocate(size_t n, uint a) @safe;
+
+    /**
+    Allocates and returns all memory available to this allocator.
+    Implementations that do not support this primitive should always return
+    `null`.
+    */
+    void[] allocateAll() @safe;
+
+    /**
+    Expands a memory block in place and returns `true` if successful.
+    Implementations that don't support this primitive should always return
+    `false`.
+    */
+    bool expand(ref void[], size_t) @safe;
+
+    /// Reallocates a memory block.
+    bool reallocate(ref void[], size_t);
+
+    /// Reallocates a memory block with specified alignment.
+    bool alignedReallocate(ref void[] b, size_t size, uint alignment);
+
+    /**
+    Returns $(D Ternary.yes) if the allocator owns $(D b), $(D Ternary.no) if
+    the allocator doesn't own $(D b), and $(D Ternary.unknown) if ownership
+    cannot be determined. Implementations that don't support this primitive
+    should always return `Ternary.unknown`.
+    */
+    Ternary owns(void[] b) @safe;
+
+    /**
+    Resolves an internal pointer to the full block allocated. Implementations
+    that don't support this primitive should always return `Ternary.unknown`.
+    */
+    Ternary resolveInternalPointer(const void* p, ref void[] result) @safe;
+
+    /**
+    Deallocates a memory block. Implementations that don't support this
+    primitive should always return `false`. A simple way to check that an
+    allocator supports deallocation is to call $(D deallocate(null)).
+    */
+    bool deallocate(void[] b);
+
+    /**
+    Deallocates all memory. Implementations that don't support this primitive
+    should always return `false`.
+    */
+    bool deallocateAll();
+
+    /**
+    Returns $(D Ternary.yes) if no memory is currently allocated from this
+    allocator, $(D Ternary.no) if some allocations are currently active, or
+    $(D Ternary.unknown) if not supported.
+    */
+    Ternary empty() @safe;
+}
+
+interface INoGCAllocator : IAllocator
+{
+    /**
+    Returns the alignment offered.
+    */
+    @property uint alignment() @nogc;
+
+    /**
+    Returns the good allocation size that guarantees zero internal
+    fragmentation.
+    */
+    size_t goodAllocSize(size_t s) @nogc;
+
+    /**
+    Allocates `n` bytes of memory.
+    */
+    void[] allocate(size_t, TypeInfo ti = null) @nogc;
+
+    /**
+    Allocates `n` bytes of memory with specified alignment `a`. Implementations
+    that do not support this primitive should always return `null`.
+    */
+    void[] alignedAllocate(size_t n, uint a) @nogc;
+
+    /**
+    Allocates and returns all memory available to this allocator.
+    Implementations that do not support this primitive should always return
+    `null`.
+    */
+    void[] allocateAll() @nogc;
+
+    /**
+    Expands a memory block in place and returns `true` if successful.
+    Implementations that don't support this primitive should always return
+    `false`.
+    */
+    bool expand(ref void[], size_t) @nogc;
+
+    /// Reallocates a memory block.
+    bool reallocate(ref void[], size_t) @nogc;
+
+    /// Reallocates a memory block with specified alignment.
+    bool alignedReallocate(ref void[] b, size_t size, uint alignment) @nogc;
+
+    /**
+    Returns $(D Ternary.yes) if the allocator owns $(D b), $(D Ternary.no) if
+    the allocator doesn't own $(D b), and $(D Ternary.unknown) if ownership
+    cannot be determined. Implementations that don't support this primitive
+    should always return `Ternary.unknown`.
+    */
+    Ternary owns(void[] b) @nogc;
+
+    /**
+    Resolves an internal pointer to the full block allocated. Implementations
+    that don't support this primitive should always return `Ternary.unknown`.
+    */
+    Ternary resolveInternalPointer(const void* p, ref void[] result) @nogc;
+
+    /**
+    Deallocates a memory block. Implementations that don't support this
+    primitive should always return `false`. A simple way to check that an
+    allocator supports deallocation is to call $(D deallocate(null)).
+    */
+    bool deallocate(void[] b) @nogc;
+
+    /**
+    Deallocates all memory. Implementations that don't support this primitive
+    should always return `false`.
+    */
+    bool deallocateAll() @nogc;
+
+    /**
+    Returns $(D Ternary.yes) if no memory is currently allocated from this
+    allocator, $(D Ternary.no) if some allocations are currently active, or
+    $(D Ternary.unknown) if not supported.
+    */
+    Ternary empty() @nogc;
+}
+
+interface ISafeNoGCAllocator : ISafeAllocator, INoGCAllocator
+{
+    /**
+    Returns the alignment offered.
+    */
+    @property uint alignment() @safe @nogc;
+
+    /**
+    Returns the good allocation size that guarantees zero internal
+    fragmentation.
+    */
+    size_t goodAllocSize(size_t s) @safe @nogc;
+
+    /**
+    Allocates `n` bytes of memory.
+    */
+    void[] allocate(size_t, TypeInfo ti = null) @safe @nogc;
+
+    /**
+    Allocates `n` bytes of memory with specified alignment `a`. Implementations
+    that do not support this primitive should always return `null`.
+    */
+    void[] alignedAllocate(size_t n, uint a) @safe @nogc;
+
+    /**
+    Allocates and returns all memory available to this allocator.
+    Implementations that do not support this primitive should always return
+    `null`.
+    */
+    void[] allocateAll() @safe @nogc;
+
+    /**
+    Expands a memory block in place and returns `true` if successful.
+    Implementations that don't support this primitive should always return
+    `false`.
+    */
+    bool expand(ref void[], size_t) @safe @nogc;
+
+    /// Reallocates a memory block.
+    bool reallocate(ref void[], size_t) @nogc;
+
+    /// Reallocates a memory block with specified alignment.
+    bool alignedReallocate(ref void[] b, size_t size, uint alignment) @nogc;
+
+    /**
+    Returns $(D Ternary.yes) if the allocator owns $(D b), $(D Ternary.no) if
+    the allocator doesn't own $(D b), and $(D Ternary.unknown) if ownership
+    cannot be determined. Implementations that don't support this primitive
+    should always return `Ternary.unknown`.
+    */
+    Ternary owns(void[] b) @safe @nogc;
+
+    /**
+    Resolves an internal pointer to the full block allocated. Implementations
+    that don't support this primitive should always return `Ternary.unknown`.
+    */
+    Ternary resolveInternalPointer(const void* p, ref void[] result) @safe @nogc;
+
+    /**
+    Deallocates a memory block. Implementations that don't support this
+    primitive should always return `false`. A simple way to check that an
+    allocator supports deallocation is to call $(D deallocate(null)).
+    */
+    bool deallocate(void[] b) @nogc;
+
+    /**
+    Deallocates all memory. Implementations that don't support this primitive
+    should always return `false`.
+    */
+    bool deallocateAll() @nogc;
+
+    /**
+    Returns $(D Ternary.yes) if no memory is currently allocated from this
+    allocator, $(D Ternary.no) if some allocations are currently active, or
+    $(D Ternary.unknown) if not supported.
+    */
+    Ternary empty() @safe @nogc;
+}
+
 /**
 Dynamic shared allocator interface. Code that defines allocators shareable
 across threads ultimately implements this interface. This should be used
@@ -457,6 +694,119 @@ interface ISharedAllocator
     $(D Ternary.unknown) if not supported.
     */
     Ternary empty() shared;
+}
+
+template isIAllocator(Allocator,
+                      Flag!"fsafe" fsafe = No.fsafe,
+                      Flag!"fnogc" fnogc = No.fnogc,
+                      Flag!"fshared" fshared = No.fshared)
+{
+    enum isIAllocator = is (typeof(
+    {
+        static if (fsafe == Yes.fsafe)
+        {
+            static immutable qsafe = "@safe ";
+        }
+        else
+        {
+            static immutable qsafe = " ";
+        }
+
+        static if (fnogc == Yes.fnogc)
+        {
+            static immutable qnogc = "@nogc ";
+        }
+        else
+        {
+            static immutable qnogc = " ";
+        }
+
+        static if (fshared == Yes.fshared)
+        {
+            static immutable qshared = "shared ";
+        }
+        else
+        {
+            static immutable qshared = " ";
+        }
+
+        static if (stateSize!Allocator) Allocator a;
+        else alias a = Allocator.instance;
+
+        // Those methods can be safe, nogc and shared
+        mixin(q{() } ~ qsafe ~ qnogc ~ qshared ~ q{{
+            auto t = a.alignment;
+            a.goodAllocSize(0);
+            auto buff = a.allocate(0);
+
+            static if (hasMember!(Allocator, "alignedAllocate"))
+            {
+                a.alignedAllocate(0, 0);
+            }
+            static if (hasMember!(Allocator, "allocateAll"))
+            {
+                a.allocateAll();
+            }
+            static if (hasMember!(Allocator, "owns"))
+            {
+                a.owns(null);
+            }
+            static if (hasMember!(Allocator, "expand"))
+            {
+                a.expand(buff, 0);
+            }
+            static if (hasMember!(Allocator, "resolveInternalPointer"))
+            {
+                void[] r;
+                a.resolveInternalPointer(&buff[0], r);
+            }
+            static if (hasMember!(Allocator, "empty"))
+            {
+                a.empty();
+            }
+        }();});
+
+        // Those methods can be nogc and shared
+        mixin(q{() } ~ qnogc ~ qshared ~ q{{
+            void[] buff;
+            static if (hasMember!(Allocator, "reallocate"))
+            {
+                a.reallocate(buff, 0);
+            }
+            static if (hasMember!(Allocator, "alignedReallocate")
+                       || hasMember!(Allocator, "alignedAllocate"))
+            {
+                a.alignedReallocate(buff, 0, 0);
+            }
+            static if (hasMember!(Allocator, "deallocate"))
+            {
+                a.deallocate(buff);
+            }
+            static if (hasMember!(Allocator, "deallocateAll"))
+            {
+                a.deallocateAll();
+            }
+        }();});
+    }()));
+}
+
+@safe unittest {
+    import std.experimental.allocator.gc_allocator : GCAllocator;
+
+    assert(isIAllocator!(GCAllocator, Yes.fsafe, No.fnogc, Yes.fshared));
+    assert(!isIAllocator!(GCAllocator, Yes.fsafe, Yes.fnogc, Yes.fshared));
+
+    import std.experimental.allocator.mallocator : Mallocator;
+    import std.experimental.allocator.building_blocks.region : InSituRegion;
+    import std.experimental.allocator.building_blocks.fallback_allocator : FallbackAllocator;
+
+    assert(isIAllocator!(FallbackAllocator!(InSituRegion!16_384, GCAllocator),
+                        No.fsafe, No.fnogc, No.fshared));
+    assert(isIAllocator!(FallbackAllocator!(InSituRegion!16_384, Mallocator),
+                        No.fsafe, Yes.fnogc, No.fshared));
+
+    assert(isIAllocator!(INoGCAllocator, No.fsafe, Yes.fnogc, No.fshared));
+    assert(isIAllocator!(ISafeNoGCAllocator, Yes.fsafe, Yes.fnogc, No.fshared));
 }
 
 shared ISharedAllocator _processAllocator;
@@ -2047,6 +2397,81 @@ CAllocatorImpl!(A, Yes.indirect) allocatorObject(A)(A* pa)
     assert(a.deallocate(b));
 }
 
+CAllocatorImplGen!A allocatorObjectGen(A)(auto ref A a)
+if (!isPointer!A)
+{
+    import std.conv : emplace;
+    static if (stateSize!A == 0)
+    {
+        enum s = stateSize!(CAllocatorImplGen!A).divideRoundUp(ulong.sizeof);
+        static __gshared ulong[s] state;
+        static __gshared CAllocatorImplGen!A result;
+        if (!result)
+        {
+            // Don't care about a few races
+            result = emplace!(CAllocatorImplGen!A)(state[]);
+        }
+        assert(result);
+        return result;
+    }
+    else static if (is(typeof({ A b = a; A c = b; }))) // copyable
+    {
+        auto state = a.allocate(stateSize!(CAllocatorImplGen!A));
+        import std.traits : hasMember;
+        static if (hasMember!(A, "deallocate"))
+        {
+            scope(failure) a.deallocate(state);
+        }
+        return cast(CAllocatorImplGen!A) emplace!(CAllocatorImplGen!A)(state);
+    }
+    else // the allocator object is not copyable
+    {
+        // This is sensitive... create on the stack and then move
+        enum s = stateSize!(CAllocatorImplGen!A).divideRoundUp(ulong.sizeof);
+        ulong[s] state;
+        import std.algorithm.mutation : move;
+        emplace!(CAllocatorImplGen!A)(state[], move(a));
+        auto dynState = a.allocate(stateSize!(CAllocatorImplGen!A));
+        // Bitblast the object in its final destination
+        dynState[] = state[];
+        return cast(CAllocatorImplGen!A) dynState.ptr;
+    }
+}
+
+/// Ditto
+CAllocatorImplGen!(A, Yes.indirect) allocatorObjectGen(A)(A* pa)
+{
+    assert(pa);
+    import std.conv : emplace;
+    auto state = pa.allocate(stateSize!(CAllocatorImplGen!(A, Yes.indirect)));
+    import std.traits : hasMember;
+    static if (hasMember!(A, "deallocate"))
+    {
+        scope(failure) pa.deallocate(state);
+    }
+    return emplace!(CAllocatorImplGen!(A, Yes.indirect))
+        (state, pa);
+}
+
+@system unittest
+{
+    import std.experimental.allocator.mallocator : Mallocator;
+    ISafeNoGCAllocator a = allocatorObjectGen(Mallocator.instance);
+    auto b = a.allocate(100);
+    assert(b.length == 100);
+    assert(a.deallocate(b));
+
+    // The in-situ region must be used by pointer
+    import std.experimental.allocator.building_blocks.region : InSituRegion;
+    //auto r = InSituRegion!1024();
+    //a = allocatorObjectGen(&r);
+    //b = a.allocate(200);
+    //assert(b.length == 200);
+    //// In-situ regions can deallocate the last allocation
+    //assert(a.deallocate(b));
+}
+
+
 /**
 
 Returns a dynamically-typed $(D CSharedAllocator) built around a given statically-
@@ -2295,6 +2720,235 @@ class CAllocatorImpl(Allocator, Flag!"indirect" indirect = No.indirect)
             return null;
         }
     }
+}
+
+template CAllocatorImplGen(Allocator, Flag!"indirect" indirect = No.indirect)
+{
+    static if (isIAllocator!(Allocator, Yes.fsafe, Yes.fnogc, No.fshared))
+    {
+        alias IBaseAllocator = ISafeNoGCAllocator;
+        static immutable qsafe = "@safe ";
+        static immutable qnogc = "@nogc ";
+        static immutable qshared = " ";
+    }
+    else static if (isIAllocator!(Allocator, Yes.fsafe, No.fnogc, No.fshared))
+    {
+        alias IBaseAllocator = ISafeAllocator;
+        static immutable qsafe = "@safe ";
+        static immutable qnogc = " ";
+        static immutable qshared = " ";
+    }
+    else static if (isIAllocator!(Allocator, No.fsafe, Yes.fnogc, No.fshared))
+    {
+        alias IBaseAllocator = INoGCAllocator;
+        static immutable qsafe = " ";
+        static immutable qnogc = "@nogc ";
+        static immutable qshared = " ";
+    }
+    else
+    {
+        alias IBaseAllocator = IAllocator;
+        static immutable qsafe = " ";
+        static immutable qnogc = " ";
+        static immutable qshared = " ";
+    }
+
+    class CAllocatorImplGen : IBaseAllocator
+    {
+        import std.traits : hasMember;
+
+        /**
+          The implementation is available as a public member.
+         */
+        static if (indirect)
+        {
+            private Allocator* pimpl;
+            mixin(q{ref Allocator impl() }
+                    ~ qsafe ~ qnogc ~ qshared ~ q{
+            {
+                return *pimpl;
+            }
+            });
+            this(Allocator* pa)
+            {
+                pimpl = pa;
+            }
+        }
+        else
+        {
+            static if (stateSize!Allocator) Allocator impl;
+            else alias impl = Allocator.instance;
+        }
+
+        /// Returns `impl.alignment`.
+        mixin(q{override @property uint alignment() }
+                ~ qsafe ~ qnogc ~ qshared ~ q{
+        {
+            return impl.alignment;
+        }
+        });
+
+        /**
+          Returns `impl.goodAllocSize(s)`.
+         */
+        mixin(q{override size_t goodAllocSize(size_t s) }
+                ~ qsafe ~ qnogc ~ qshared ~ q{
+        {
+            return impl.goodAllocSize(s);
+        }
+        });
+
+        /**
+          Returns `impl.allocate(s)`.
+         */
+        mixin(q{override void[] allocate(size_t s, TypeInfo ti = null) }
+                ~ qsafe ~ qnogc ~ qshared ~ q{
+        {
+            return impl.allocate(s);
+        }
+        });
+
+        /**
+          If `impl.alignedAllocate` exists, calls it and returns the result.
+          Otherwise, always returns `null`.
+         */
+        mixin(q{override void[] alignedAllocate(size_t s, uint a) }
+                ~ qsafe ~ qnogc ~ qshared ~ q{
+        {
+            static if (hasMember!(Allocator, "alignedAllocate"))
+                return impl.alignedAllocate(s, a);
+            else
+                return null;
+        }
+        });
+
+        /**
+          If `Allocator` implements `owns`, forwards to it. Otherwise, returns
+          `Ternary.unknown`.
+         */
+        mixin(q{override Ternary owns(void[] b) }
+                ~ qsafe ~ qnogc ~ qshared ~ q{
+        {
+            static if (hasMember!(Allocator, "owns")) return impl.owns(b);
+            else return Ternary.unknown;
+        }
+        });
+
+        /// Returns $(D impl.expand(b, s)) if defined, `false` otherwise.
+        mixin(q{override bool expand(ref void[] b, size_t s) }
+                ~ qsafe ~ qnogc ~ qshared ~ q{
+        {
+            static if (hasMember!(Allocator, "expand"))
+                return impl.expand(b, s);
+            else
+                return s == 0;
+        }
+        });
+
+        /// Returns $(D impl.reallocate(b, s)).
+        mixin(q{override bool reallocate(ref void[] b, size_t s) }
+                ~ qnogc ~ qshared ~ q{
+        {
+            return impl.reallocate(b, s);
+        }
+        });
+
+        /// Forwards to `impl.alignedReallocate` if defined, `false` otherwise.
+        mixin(q{bool alignedReallocate(ref void[] b, size_t s, uint a) }
+                ~ qnogc ~ qshared ~ q{
+        {
+            static if (hasMember!(Allocator, "alignedReallocate")
+                       || hasMember!(Allocator, "alignedAllocate"))
+                return impl.alignedReallocate(b, s, a);
+            else
+                return false;
+        }
+        });
+
+        // Undocumented for now
+        mixin(q{Ternary resolveInternalPointer(const void* p, ref void[] result) }
+                ~ qsafe ~ qnogc ~ qshared ~ q{
+        {
+            static if (hasMember!(Allocator, "resolveInternalPointer"))
+                return impl.resolveInternalPointer(p, result);
+            else
+                return Ternary.unknown;
+        }
+        });
+
+        /**
+          If `impl.deallocate` is not defined, returns `false`. Otherwise it forwards
+          the call.
+         */
+        mixin(q{override bool deallocate(void[] b) }
+                ~ qnogc ~ qshared ~ q{
+        {
+            static if (hasMember!(Allocator, "deallocate"))
+                return impl.deallocate(b);
+            else
+                return false;
+        }
+        });
+
+        /**
+          Calls `impl.deallocateAll()` and returns the result if defined,
+          otherwise returns `false`.
+         */
+        mixin(q{override bool deallocateAll() }
+                ~ qnogc ~ qshared ~ q{
+        {
+            static if (hasMember!(Allocator, "deallocateAll"))
+                return impl.deallocateAll();
+            else
+                return false;
+        }
+        });
+
+        /**
+          Forwards to `impl.empty()` if defined, otherwise returns `Ternary.unknown`.
+         */
+        mixin(q{override Ternary empty() }
+                ~ qsafe ~ qnogc ~ qshared ~ q{
+        {
+            static if (hasMember!(Allocator, "empty"))
+                return Ternary(impl.empty);
+            else
+                return Ternary.unknown;
+        }
+        });
+
+        /**
+          Returns `impl.allocateAll()` if present, `null` otherwise.
+         */
+        mixin(q{override void[] allocateAll() }
+                ~ qsafe ~ qnogc ~ qshared ~ q{
+        {
+            static if (hasMember!(Allocator, "allocateAll"))
+                return impl.allocateAll();
+            else
+                return null;
+        }
+        });
+    }
+}
+
+unittest {
+    import std.experimental.allocator.gc_allocator : GCAllocator;
+    import std.conv : emplace;
+
+    enum s = stateSize!(CAllocatorImplGen!GCAllocator).divideRoundUp(ulong.sizeof);
+    static ulong[s] state;
+    static CAllocatorImplGen!GCAllocator result;
+    if (!result)
+    {
+        result = emplace!(CAllocatorImplGen!GCAllocator)(state[]);
+    }
+    assert(result);
+
+    () @safe {
+        auto v = result.allocate(10);
+        assert(v.length == 10);
+    }();
 }
 
 /**

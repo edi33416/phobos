@@ -30,7 +30,7 @@ struct GCAllocator
     }
 
     /// Ditto
-    @system bool expand(ref void[] b, size_t delta) shared
+    @trusted bool expand(ref void[] b, size_t delta) shared
     {
         if (delta == 0) return true;
         if (b is null) return false;
@@ -70,7 +70,7 @@ struct GCAllocator
     }
 
     /// Ditto
-    pure nothrow
+    pure nothrow @trusted
     Ternary resolveInternalPointer(const void* p, ref void[] result) shared
     {
         auto r = GC.addrOf(cast(void*) p);
@@ -87,7 +87,7 @@ struct GCAllocator
     }
 
     /// Ditto
-    size_t goodAllocSize(size_t n) shared
+    @safe size_t goodAllocSize(size_t n) shared
     {
         if (n == 0)
             return 0;
