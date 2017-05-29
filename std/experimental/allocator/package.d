@@ -983,7 +983,7 @@ allocator can be cast to $(D shared).
     shared ISharedAllocator indirectShFLObj = sharedAllocatorObject(&sharedFL);
     testAllocatorObject(indirectShFLObj);
 
-    IAllocator indirectMallocator = allocatorObject(&Mallocator.instance);
+    ISafeNoGCAllocator indirectMallocator = allocatorObject(&Mallocator.instance);
     testAllocatorObject(indirectMallocator);
 }
 
@@ -2397,78 +2397,28 @@ CAllocatorImpl!(A, Yes.indirect) allocatorObject(A)(A* pa)
     assert(a.deallocate(b));
 }
 
-CAllocatorImplGen!A allocatorObjectGen(A)(auto ref A a)
-if (!isPointer!A)
-{
-    import std.conv : emplace;
-    static if (stateSize!A == 0)
-    {
-        enum s = stateSize!(CAllocatorImplGen!A).divideRoundUp(ulong.sizeof);
-        static __gshared ulong[s] state;
-        static __gshared CAllocatorImplGen!A result;
-        if (!result)
-        {
-            // Don't care about a few races
-            result = emplace!(CAllocatorImplGen!A)(state[]);
-        }
-        assert(result);
-        return result;
-    }
-    else static if (is(typeof({ A b = a; A c = b; }))) // copyable
-    {
-        auto state = a.allocate(stateSize!(CAllocatorImplGen!A));
-        import std.traits : hasMember;
-        static if (hasMember!(A, "deallocate"))
-        {
-            scope(failure) a.deallocate(state);
-        }
-        return cast(CAllocatorImplGen!A) emplace!(CAllocatorImplGen!A)(state);
-    }
-    else // the allocator object is not copyable
-    {
-        // This is sensitive... create on the stack and then move
-        enum s = stateSize!(CAllocatorImplGen!A).divideRoundUp(ulong.sizeof);
-        ulong[s] state;
-        import std.algorithm.mutation : move;
-        emplace!(CAllocatorImplGen!A)(state[], move(a));
-        auto dynState = a.allocate(stateSize!(CAllocatorImplGen!A));
-        // Bitblast the object in its final destination
-        dynState[] = state[];
-        return cast(CAllocatorImplGen!A) dynState.ptr;
-    }
-}
-
-/// Ditto
-CAllocatorImplGen!(A, Yes.indirect) allocatorObjectGen(A)(A* pa)
-{
-    assert(pa);
-    import std.conv : emplace;
-    auto state = pa.allocate(stateSize!(CAllocatorImplGen!(A, Yes.indirect)));
-    import std.traits : hasMember;
-    static if (hasMember!(A, "deallocate"))
-    {
-        scope(failure) pa.deallocate(state);
-    }
-    return emplace!(CAllocatorImplGen!(A, Yes.indirect))
-        (state, pa);
-}
-
-@system unittest
+@safe @nogc unittest
 {
     import std.experimental.allocator.mallocator : Mallocator;
-    ISafeNoGCAllocator a = allocatorObjectGen(Mallocator.instance);
+    ISafeNoGCAllocator a = (() @trusted => allocatorObject(Mallocator.instance))();
     auto b = a.allocate(100);
     assert(b.length == 100);
-    assert(a.deallocate(b));
+    assert((() @trusted => a.deallocate(b))());
 
     // The in-situ region must be used by pointer
     import std.experimental.allocator.building_blocks.region : InSituRegion;
-    //auto r = InSituRegion!1024();
-    //a = allocatorObjectGen(&r);
-    //b = a.allocate(200);
-    //assert(b.length == 200);
-    //// In-situ regions can deallocate the last allocation
-    //assert(a.deallocate(b));
+    () @trusted {
+        auto r = InSituRegion!1024();
+        assert(isIAllocator!(InSituRegion!1024,
+                             No.fsafe, Yes.fnogc, No.fshared));
+        assert(!__traits(compiles,
+                    { ISafeNoGCAllocator aa = allocatorObject(&r); }));
+        INoGCAllocator aa = allocatorObject(&r);
+        b = aa.allocate(200);
+        assert(b.length == 200);
+        // In-situ regions can deallocate the last allocation
+        assert(aa.deallocate(b));
+    }();
 }
 
 
@@ -2548,181 +2498,7 @@ non-templated code.
 
 Usually `CAllocatorImpl` is used indirectly by calling $(LREF theAllocator).
 */
-class CAllocatorImpl(Allocator, Flag!"indirect" indirect = No.indirect)
-    : IAllocator
-{
-    import std.traits : hasMember;
-
-    /**
-    The implementation is available as a public member.
-    */
-    static if (indirect)
-    {
-        private Allocator* pimpl;
-        ref Allocator impl()
-        {
-            return *pimpl;
-        }
-        this(Allocator* pa)
-        {
-            pimpl = pa;
-        }
-    }
-    else
-    {
-        static if (stateSize!Allocator) Allocator impl;
-        else alias impl = Allocator.instance;
-    }
-
-    /// Returns `impl.alignment`.
-    override @property uint alignment()
-    {
-        return impl.alignment;
-    }
-
-    /**
-    Returns `impl.goodAllocSize(s)`.
-    */
-    override size_t goodAllocSize(size_t s)
-    {
-        return impl.goodAllocSize(s);
-    }
-
-    /**
-    Returns `impl.allocate(s)`.
-    */
-    override void[] allocate(size_t s, TypeInfo ti = null)
-    {
-        return impl.allocate(s);
-    }
-
-    /**
-    If `impl.alignedAllocate` exists, calls it and returns the result.
-    Otherwise, always returns `null`.
-    */
-    override void[] alignedAllocate(size_t s, uint a)
-    {
-        static if (hasMember!(Allocator, "alignedAllocate"))
-            return impl.alignedAllocate(s, a);
-        else
-            return null;
-    }
-
-    /**
-    If `Allocator` implements `owns`, forwards to it. Otherwise, returns
-    `Ternary.unknown`.
-    */
-    override Ternary owns(void[] b)
-    {
-        static if (hasMember!(Allocator, "owns")) return impl.owns(b);
-        else return Ternary.unknown;
-    }
-
-    /// Returns $(D impl.expand(b, s)) if defined, `false` otherwise.
-    override bool expand(ref void[] b, size_t s)
-    {
-        static if (hasMember!(Allocator, "expand"))
-            return impl.expand(b, s);
-        else
-            return s == 0;
-    }
-
-    /// Returns $(D impl.reallocate(b, s)).
-    override bool reallocate(ref void[] b, size_t s)
-    {
-        return impl.reallocate(b, s);
-    }
-
-    /// Forwards to `impl.alignedReallocate` if defined, `false` otherwise.
-    bool alignedReallocate(ref void[] b, size_t s, uint a)
-    {
-        static if (!hasMember!(Allocator, "alignedAllocate"))
-        {
-            return false;
-        }
-        else
-        {
-            return impl.alignedReallocate(b, s, a);
-        }
-    }
-
-    // Undocumented for now
-    Ternary resolveInternalPointer(const void* p, ref void[] result)
-    {
-        static if (hasMember!(Allocator, "resolveInternalPointer"))
-        {
-            return impl.resolveInternalPointer(p, result);
-        }
-        else
-        {
-            return Ternary.unknown;
-        }
-    }
-
-    /**
-    If `impl.deallocate` is not defined, returns `false`. Otherwise it forwards
-    the call.
-    */
-    override bool deallocate(void[] b)
-    {
-        static if (hasMember!(Allocator, "deallocate"))
-        {
-            return impl.deallocate(b);
-        }
-        else
-        {
-            return false;
-        }
-    }
-
-    /**
-    Calls `impl.deallocateAll()` and returns the result if defined,
-    otherwise returns `false`.
-    */
-    override bool deallocateAll()
-    {
-        static if (hasMember!(Allocator, "deallocateAll"))
-        {
-            return impl.deallocateAll();
-        }
-        else
-        {
-            return false;
-        }
-    }
-
-    /**
-    Forwards to `impl.empty()` if defined, otherwise returns `Ternary.unknown`.
-    */
-    override Ternary empty()
-    {
-        static if (hasMember!(Allocator, "empty"))
-        {
-            return Ternary(impl.empty);
-        }
-        else
-        {
-            return Ternary.unknown;
-        }
-    }
-
-    /**
-    Returns `impl.allocateAll()` if present, `null` otherwise.
-    */
-    override void[] allocateAll()
-    {
-        static if (hasMember!(Allocator, "allocateAll"))
-        {
-            return impl.allocateAll();
-        }
-        else
-        {
-            return null;
-        }
-    }
-}
-
-template CAllocatorImplGen(Allocator, Flag!"indirect" indirect = No.indirect)
+template CAllocatorImpl(Allocator, Flag!"indirect" indirect = No.indirect)
 {
     static if (isIAllocator!(Allocator, Yes.fsafe, Yes.fnogc, No.fshared))
     {
@@ -2753,7 +2529,7 @@ template CAllocatorImplGen(Allocator, Flag!"indirect" indirect = No.indirect)
         static immutable qshared = " ";
     }
 
-    class CAllocatorImplGen : IBaseAllocator
+    class CAllocatorImpl : IBaseAllocator
     {
         import std.traits : hasMember;
 
@@ -2930,25 +2706,6 @@ template CAllocatorImplGen(Allocator, Flag!"indirect" indirect = No.indirect)
         }
         });
     }
-}
-
-unittest {
-    import std.experimental.allocator.gc_allocator : GCAllocator;
-    import std.conv : emplace;
-
-    enum s = stateSize!(CAllocatorImplGen!GCAllocator).divideRoundUp(ulong.sizeof);
-    static ulong[s] state;
-    static CAllocatorImplGen!GCAllocator result;
-    if (!result)
-    {
-        result = emplace!(CAllocatorImplGen!GCAllocator)(state[]);
-    }
-    assert(result);
-
-    () @safe {
-        auto v = result.allocate(10);
-        assert(v.length == 10);
-    }();
 }
 
 /**
