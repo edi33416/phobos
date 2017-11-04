@@ -304,6 +304,7 @@ struct FreeList(ParentAllocator,
 
     Postcondition: $(D result.length == bytes || result is null)
     */
+    nothrow
     void[] allocate(size_t n)
     {
         static if (adaptive == Yes.adaptive) ++accumSamples;

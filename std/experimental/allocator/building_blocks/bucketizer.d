@@ -57,6 +57,7 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
     /**
     Directs the call to either one of the $(D buckets) allocators.
     */
+    nothrow
     void[] allocate(size_t bytes)
     {
         if (!bytes) return null;
@@ -109,6 +110,7 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
     step, min + (k + 1) * step - 1]), then reallocation is in place. Otherwise,
     reallocation with moving is attempted.
     */
+    nothrow
     bool reallocate(ref void[] b, size_t size)
     {
         if (size == 0)
@@ -117,9 +119,9 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
             b = null;
             return true;
         }
-        if (size >= b.length)
+        if (size >= b.length && expand(b, size - b.length))
         {
-            return expand(b, size - b.length);
+            return true;
         }
         assert(b.length >= min && b.length <= max);
         if (goodAllocSize(size) == goodAllocSize(b.length))
@@ -258,4 +260,9 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
         65, 512, 64) a;
 
     assert((() pure nothrow @safe @nogc => a.goodAllocSize(65))() == 128);
+
+    auto b = a.allocate(100);
+    assert(b.length == 100);
+    assert((() nothrow => a.reallocate(b, 200))());
+    assert(b.length == 200);
 }

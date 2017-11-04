@@ -162,6 +162,7 @@ struct AllocatorList(Factory, BookkeepingAllocator = GCAllocator)
     fails, subsequent calls to $(D allocate) will not cause more calls to $(D
     make).
     */
+    nothrow
     void[] allocate(size_t s)
     {
         for (auto p = &root, n = *p; n; p = &n.next, n = *p)
@@ -247,6 +248,7 @@ struct AllocatorList(Factory, BookkeepingAllocator = GCAllocator)
     }
 
     static if (ouroboros)
+        nothrow
     private Node* addAllocator(size_t atLeastBytes)
     {
         void[] t = allocators;
@@ -300,6 +302,7 @@ struct AllocatorList(Factory, BookkeepingAllocator = GCAllocator)
     }
 
     static if (!ouroboros)
+        nothrow
     private Node* addAllocator(size_t atLeastBytes)
     {
         void[] t = allocators;

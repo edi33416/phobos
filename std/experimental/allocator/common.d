@@ -347,6 +347,7 @@ defined. This is deliberate so allocators may use it internally within their own
 implementation of $(D reallocate).
 
 */
+nothrow
 bool reallocate(Allocator)(ref Allocator a, ref void[] b, size_t s)
 {
     if (b.length == s) return true;
