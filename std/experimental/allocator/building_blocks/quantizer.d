@@ -79,7 +79,7 @@ struct Quantizer(ParentAllocator, alias roundingFunction)
     void[] allocate(size_t n)
     {
         auto result = parent.allocate(goodAllocSize(n));
-        return result.ptr ? result.ptr[0 .. n] : null;
+        return result ? result[0 .. n] : null;
     }
 
     /**
@@ -233,29 +233,28 @@ struct Quantizer(ParentAllocator, alias roundingFunction)
     assert(buf.ptr);
 }
 
-@system unittest
+@safe unittest
 {
     import std.experimental.allocator.gc_allocator : GCAllocator;
     alias MyAlloc = Quantizer!(GCAllocator,
         (size_t n) => n.roundUpToMultipleOf(64));
-    testAllocator!(() => MyAlloc());
+    () @trusted { testAllocator!(() => MyAlloc()); }();
 
-    assert((() pure nothrow @safe @nogc => MyAlloc().goodAllocSize(1))() == 64);
-
-    auto a = MyAlloc();
-    auto b = a.allocate(42);
-    assert(b.length == 42);
-    // Inplace expand, since goodAllocSize is 64
-    assert((() @safe => a.expand(b, 22))());
-    //assert((() nothrow @safe => a.expand(b, 22))());
-    assert(b.length == 64);
-    // Trigger parent.expand, which may or may not succed
-    //() nothrow @safe { a.expand(b, 1); }();
-    () @safe { a.expand(b, 1); }();
-    assert(a.reallocate(b, 100));
-    assert(b.length == 100);
-    // Ensure deallocate inherits from parent
-    () nothrow @nogc { a.deallocate(b); }();
+    () nothrow {
+        auto a = MyAlloc();
+        assert((() pure @nogc => a.goodAllocSize(1))() == 64);
+        auto b = a.allocate(42);
+        assert(b.length == 42);
+        // Inplace expand, since goodAllocSize is 64
+        assert(a.expand(b, 22));
+        assert(b.length == 64);
+        // Trigger parent.expand, which may or may not succed
+        a.expand(b, 1);
+        assert((() @trusted => a.reallocate(b, 100))());
+        assert(b.length == 100);
+        // Ensure deallocate inherits from parent
+        () @trusted @nogc { a.deallocate(b); }();
+    }();
 }
 
 @system unittest
@@ -267,7 +266,7 @@ struct Quantizer(ParentAllocator, alias roundingFunction)
     alias Alloc = Quantizer!(Region!(Mallocator),
             (size_t n) => n.roundUpToMultipleOf(64));
     auto a = Alloc(Region!Mallocator(1024 * 64));
-    const b = a.allocate(42);
+    const b = (() pure nothrow @safe @nogc => a.allocate(42))();
     assert(b.length == 42);
     // Check that owns inherits from parent, i.e. Region
     assert((() pure nothrow @safe @nogc => a.owns(b))() == Ternary.yes);
@@ -315,7 +314,7 @@ struct Quantizer(ParentAllocator, alias roundingFunction)
     auto a = MyAlloc(Region!()(new ubyte[1024 * 64]));
     // Check that empty inherits from parent
     assert((() pure nothrow @safe @nogc => a.empty)() == Ternary.yes);
-    auto b = a.allocate(42);
+    auto b = (() pure nothrow @safe @nogc => a.allocate(42))();
     assert(b.length == 42);
     assert((() pure nothrow @safe @nogc => a.empty)() == Ternary.no);
     // Check that deallocateAll inherits from parent
