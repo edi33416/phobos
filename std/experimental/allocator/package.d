@@ -369,7 +369,7 @@ nothrow:
 
     For stateless allocators, this does nothing.
     */
-    @safe @nogc
+    @safe @nogc pure
     void incRef();
 
     /**
@@ -380,7 +380,7 @@ nothrow:
     Returns: `true` if the reference count is greater than `0` and `false` when
     it hits `0`. For stateless allocators, it always returns `true`.
     */
-    @safe @nogc
+    @safe @nogc pure
     bool decRef();
 }
 
@@ -412,7 +412,7 @@ nothrow:
         _alloc = alloc;
     }
 
-    @nogc @safe
+    @nogc @safe pure
     this(this)
     {
         if (_alloc !is null)
@@ -421,7 +421,7 @@ nothrow:
         }
     }
 
-    @nogc @safe
+    @nogc @safe pure
     ~this()
     {
         if (_alloc !is null)
@@ -554,6 +554,7 @@ nothrow:
     assert((cast(CAllocatorImpl!(Region!(), Yes.indirect))(rcalloc._alloc)).rc == 1);
 }
 
+version(none)
 @system unittest
 {
     import std.conv;
@@ -577,6 +578,7 @@ nothrow:
             ~ to!string(bytesUsed) ~ " bytes");
 }
 
+version(none)
 @system unittest
 {
     import std.conv;
@@ -712,7 +714,7 @@ nothrow:
 
     For stateless allocators, this does nothing.
     */
-    @safe @nogc
+    @safe @nogc pure
     void incRef() shared;
 
     /**
@@ -725,7 +727,7 @@ nothrow:
     Returns: `true` if the reference count is greater than `0` and `false` when
     it hits `0`. For stateless allocators, it always returns `true`.
     */
-    @safe @nogc
+    @safe @nogc pure
     bool decRef() shared;
 }
 
@@ -758,7 +760,7 @@ nothrow:
         _alloc = alloc;
     }
 
-    @nogc @safe
+    @nogc @safe pure
     this(this)
     {
         if (_alloc !is null)
@@ -767,7 +769,7 @@ nothrow:
         }
     }
 
-    @nogc @safe
+    @nogc @safe pure
     ~this()
     {
         if (_alloc !is null)
@@ -958,14 +960,14 @@ private ref RCIAllocator setupThreadAllocator()
         }
 
         //nothrow @safe @nogc
-        @safe @nogc
+        @safe @nogc pure
         override void incRef()
         {
             processAllocator._alloc.incRef();
         }
 
         //nothrow @safe @nogc
-        @safe @nogc
+        @safe @nogc pure
         override bool decRef()
         {
             return processAllocator._alloc.decRef();
@@ -986,12 +988,19 @@ to be shared across threads, use `processAllocator` (below). By default,
 `theAllocator` ultimately fetches memory from `processAllocator`, which
 in turn uses the garbage collected heap.
 */
-nothrow @safe @nogc
+//nothrow @safe @nogc pure
+nothrow @trusted @nogc pure
 @property ref RCIAllocator theAllocator()
 {
-    alias p = _threadAllocator;
-    return !p.isNull() ? p : setupThreadAllocator();
+    return *(cast(RCIAllocator* function() nothrow @nogc pure)(&forceThAttributes))();
 }
+
+static RCIAllocator* forceThAttributes()
+{
+    alias p = _threadAllocator;
+    return !p.isNull() ? &p : &setupThreadAllocator();
+}
+
 
 /// Ditto
 nothrow @system @nogc
@@ -1002,6 +1011,7 @@ nothrow @system @nogc
 }
 
 ///
+version(none)
 @system unittest
 {
     // Install a new allocator that is faster for 128-byte allocations.
@@ -1021,20 +1031,21 @@ Gets/sets the allocator for the current process. This allocator must be used
 for allocating memory shared across threads. Objects created using this
 allocator can be cast to `shared`.
 */
-@trusted nothrow @nogc
+@trusted nothrow @nogc pure
 @property ref RCISharedAllocator processAllocator()
+{
+    return *(cast(RCISharedAllocator* function() nothrow @nogc pure)(&forceAttributes))();
+}
+
+static RCISharedAllocator* forceAttributes()
 {
     import std.experimental.allocator.gc_allocator : GCAllocator;
     import std.concurrency : initOnce;
 
-    static RCISharedAllocator* forceAttributes()
-    {
-        return &initOnce!_processAllocator(
-                sharedAllocatorObject(GCAllocator.instance));
-    }
-
-    return *(cast(RCISharedAllocator* function() nothrow @nogc)(&forceAttributes))();
+    return &initOnce!_processAllocator(
+            sharedAllocatorObject(GCAllocator.instance));
 }
+
 
 /// Ditto
 nothrow @system @nogc
@@ -1044,6 +1055,7 @@ nothrow @system @nogc
     _processAllocator = a;
 }
 
+version(none)
 @system unittest
 {
     import core.exception : AssertError;
@@ -2592,6 +2604,7 @@ RCIAllocator allocatorObject(A)(A* pa)
     assert(a.deallocate(b));
 }
 
+version(none)
 @system unittest
 {
     import std.conv;

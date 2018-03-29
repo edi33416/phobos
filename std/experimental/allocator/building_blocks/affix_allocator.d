@@ -60,36 +60,39 @@ struct AffixAllocator(Allocator, Prefix, Suffix = void)
         enum uint alignment = Prefix.alignof;
     }
 
-    /**
-    If the parent allocator `Allocator` is stateful, an instance of it is
-    stored as a member. Otherwise, `AffixAllocator` uses
-    `Allocator.instance`. In either case, the name `_parent` is uniformly
-    used for accessing the parent allocator.
-    */
-    static if (stateSize!Allocator)
+    private template Impl()
     {
-        Allocator _parent;
-        static if (is(Allocator == RCIAllocator))
+
+        pure ~this() {}
+
+        /**
+        If the parent allocator `Allocator` is stateful, an instance of it is
+        stored as a member. Otherwise, `AffixAllocator` uses
+        `Allocator.instance`. In either case, the name `_parent` is uniformly
+        used for accessing the parent allocator.
+        */
+        static if (stateSize!Allocator)
         {
-            Allocator parent()
+            Allocator _parent;
+            static if (is(Allocator == RCIAllocator))
             {
-                if (_parent.isNull) _parent = theAllocator;
-                assert(alignment <= _parent.alignment);
-                return _parent;
+                pure
+                Allocator parent()
+                {
+                    if (_parent.isNull) _parent = theAllocator;
+                    //assert(alignment <= _parent.alignment);
+                    return _parent;
+                }
+            }
+            else
+            {
+                alias parent = _parent;
             }
         }
         else
         {
-            alias parent = _parent;
+            alias parent = Allocator.instance;
         }
-    }
-    else
-    {
-        alias parent = Allocator.instance;
-    }
-
-    private template Impl()
-    {
 
         size_t goodAllocSize(size_t s)
         {
@@ -519,4 +522,17 @@ struct AffixAllocator(Allocator, Prefix, Suffix = void)
     auto buf = a.allocate(10);
     static assert(is(typeof(a.allocate) == shared));
     assert(buf.length == 10);
+}
+
+unittest
+{
+    import std.experimental.allocator : processAllocator, RCISharedAllocator;
+
+    alias SharedAllocT = shared AffixAllocator!(RCISharedAllocator, int);
+    static assert(is(RCISharedAllocator == shared));
+    static assert(!is(SharedAllocT.instance));
+
+    () pure {
+    SharedAllocT a = SharedAllocT(processAllocator);
+    }();
 }
