@@ -139,6 +139,7 @@ struct Region(ParentAllocator = NullAllocator,
         A properly-aligned buffer of size $(D n) or $(D null) if request could not
         be satisfied.
     */
+    pure nothrow @safe @nogc
     void[] allocate(size_t n)
     {
         auto rounded = goodAllocSize(n);
@@ -147,15 +148,15 @@ struct Region(ParentAllocator = NullAllocator,
         static if (growDownwards)
         {
             assert(available >= rounded);
-            auto result = (_current - rounded)[0 .. n];
-            assert(result.ptr >= _begin);
-            _current = result.ptr;
+            auto result = (() @trusted => (_current - rounded)[0 .. n])();
+            assert(&result[0] >= _begin);
+            _current = &result[0];
             assert(owns(result) == Ternary.yes);
         }
         else
         {
-            auto result = _current[0 .. n];
-            _current += rounded;
+            auto result = (() @trusted => _current[0 .. n])();
+            () @trusted { _current += rounded; }();
         }
 
         return result;
@@ -379,18 +380,19 @@ struct Region(ParentAllocator = NullAllocator,
     import std.experimental.allocator.mallocator : Mallocator;
     import std.typecons : Ternary;
 
+    pure nothrow @safe @nogc
     static void testAlloc(Allocator)(ref Allocator a)
     {
-        assert((() pure nothrow @safe @nogc => a.empty)() ==  Ternary.yes);
+        assert(a.empty == Ternary.yes);
         const b = a.allocate(101);
         assert(b.length == 101);
-        assert((() nothrow @safe @nogc => a.owns(b))() == Ternary.yes);
+        assert(a.owns(b) == Ternary.yes);
 
         // Ensure deallocate inherits from parent allocators
         auto c = a.allocate(42);
         assert(c.length == 42);
-        assert((() nothrow @nogc => a.deallocate(c))());
-        assert((() pure nothrow @safe @nogc => a.empty)() ==  Ternary.no);
+        assert((() @trusted => a.deallocate(c))());
+        assert(a.empty == Ternary.no);
     }
 
     // Create a 64 KB region allocated with malloc
@@ -471,7 +473,7 @@ struct Region(ParentAllocator = NullAllocator,
     import std.experimental.allocator.mallocator : Mallocator;
 
     auto reg = Region!(Mallocator)(1024 * 64);
-    auto b = reg.allocate(101);
+    auto b = (() pure nothrow @safe @nogc => reg.allocate(101))();
     assert(b.length == 101);
     assert((() pure nothrow @safe @nogc => reg.expand(b, 20))());
     assert((() pure nothrow @safe @nogc => reg.expand(b, 73))());
@@ -545,7 +547,8 @@ struct InSituRegion(size_t size, size_t minAlign = platformAlignment)
     private void lazyInit()
     {
         assert(!_impl._current);
-        _impl = typeof(_impl)(_store);
+        // TODO: Remove once region ctor is made safe
+        _impl = (() @trusted => typeof(_impl)(_store))();
         assert(_impl._current.alignedAt(alignment));
     }
 
@@ -690,7 +693,7 @@ struct InSituRegion(size_t size, size_t minAlign = platformAlignment)
     import std.typecons : Ternary;
 
     InSituRegion!(4096, 1) r1;
-    auto a = r1.allocate(2001);
+    auto a = (() pure nothrow @safe @nogc => r1.allocate(2001))();
     assert(a.length == 2001);
     import std.conv : text;
     assert(r1.available == 2095, text(r1.available));
@@ -700,9 +703,9 @@ struct InSituRegion(size_t size, size_t minAlign = platformAlignment)
 
     InSituRegion!(65_536, 1024*4) r2;
     assert(r2.available <= 65_536);
-    a = r2.allocate(2001);
+    a = (() pure nothrow @safe @nogc => r2.allocate(2001))();
     assert(a.length == 2001);
-    const void[] buff = r2.allocate(42);
+    const void[] buff = (() pure nothrow @safe @nogc => r2.allocate(42))();
     assert((() nothrow @safe @nogc => r2.owns(buff))() == Ternary.yes);
     assert((() nothrow @nogc => r2.deallocateAll())());
 }
@@ -757,6 +760,7 @@ version(Posix) struct SbrkRegion(uint minAlign = platformAlignment)
     }
 
     /// Ditto
+    /*pure*/ nothrow @trusted @nogc
     void[] allocate(size_t bytes) shared
     {
         // Take alignment rounding into account
@@ -932,7 +936,7 @@ version(Posix) @system unittest
     assert(a.length == 2001);
     assert((() nothrow @safe @nogc => alloc.empty)() == Ternary.no);
     auto oldBrkCurr = alloc._brkCurrent;
-    auto b = alloc.allocate(2001);
+    auto b = (() nothrow @safe @nogc => alloc.allocate(2001))();
     assert(b.length == 2001);
     assert((() nothrow @safe @nogc => alloc.expand(b, 0))());
     assert(b.length == 2001);
@@ -953,7 +957,7 @@ version(Posix) @system unittest
         assert((() nothrow @nogc => alloc.deallocate(a))());
         assert((() nothrow @nogc => alloc.deallocateAll())());
     }
-    const void[] c = alloc.allocate(2001);
+    const void[] c = (() nothrow @safe @nogc => alloc.allocate(2001))();
     assert(c.length == 2001);
     assert((() nothrow @safe @nogc => alloc.owns(c))() == Ternary.yes);
     assert((() nothrow @safe @nogc => alloc.owns(null))() == Ternary.no);
@@ -1058,6 +1062,7 @@ nothrow @nogc:
         A properly-aligned buffer of size `n`, or `null` if request could not
         be satisfied.
     */
+    pure nothrow @safe @nogc
     void[] allocate(size_t n)
     {
         import core.atomic : cas, atomicLoad;
@@ -1071,24 +1076,24 @@ nothrow @nogc:
             do
             {
                 localCurrent = atomicLoad(_current);
-                localNewCurrent = localCurrent - rounded;
+                localNewCurrent = (() @trusted => localCurrent - rounded)();
                 if (localNewCurrent > localCurrent || localNewCurrent < _begin)
                     return null;
             } while (!cas(&_current, localCurrent, localNewCurrent));
 
-            return cast(void[]) localNewCurrent[0 .. n];
+            return (() @trusted => cast(void[]) localNewCurrent[0 .. n])();
         }
         else
         {
             do
             {
                 localCurrent = atomicLoad(_current);
-                localNewCurrent = localCurrent + rounded;
+                localNewCurrent = (() @trusted => localCurrent + rounded)();
                 if (localNewCurrent < localCurrent || localNewCurrent > _end)
                     return null;
             } while (!cas(&_current, localCurrent, localNewCurrent));
 
-            return cast(void[]) localCurrent[0 .. n];
+            return (() @trusted => cast(void[]) localCurrent[0 .. n])();
         }
 
         assert(0, "Unexpected error in SharedRegion.allocate");
