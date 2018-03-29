@@ -69,7 +69,8 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
         {
             const actual = goodAllocSize(bytes);
             auto result = a.allocate(actual);
-            return result.ptr ? result.ptr[0 .. bytes] : null;
+            // TODO: Can't this just be 'result ? result[0 .. bytes] : null' ?;
+            return (() @trusted => result ? result.ptr[0 .. bytes] : null)();
         }
         return null;
     }
@@ -265,7 +266,8 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
 
     assert((() pure nothrow @safe @nogc => a.goodAllocSize(65))() == 128);
 
-    auto b = a.allocate(100);
+    auto b = (() pure nothrow @safe @nogc => a.allocate(100))();
+    //auto b = a.allocate(100);
     assert(b.length == 100);
     // Make reallocate use extend
     assert((() nothrow @nogc => a.reallocate(b, 101))());
