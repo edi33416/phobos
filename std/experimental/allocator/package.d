@@ -348,6 +348,7 @@ nothrow:
     primitive should always return `false`. A simple way to check that an
     allocator supports deallocation is to call `deallocate(null)`.
     */
+    pure
     bool deallocate(void[] b);
 
     /**
@@ -513,6 +514,7 @@ nothrow:
         return _alloc.resolveInternalPointer(p, result);
     }
 
+    pure
     bool deallocate(void[] b)
     {
         assert(_alloc);
@@ -693,6 +695,7 @@ nothrow:
     primitive should always return `false`. A simple way to check that an
     allocator supports deallocation is to call `deallocate(null)`.
     */
+    pure
     bool deallocate(void[] b) shared;
 
     /**
@@ -863,6 +866,7 @@ nothrow:
         return _alloc.resolveInternalPointer(p, result);
     }
 
+    pure
     bool deallocate(void[] b)
     {
         assert(_alloc);
@@ -944,6 +948,7 @@ private ref RCIAllocator setupThreadAllocator()
             return processAllocator.resolveInternalPointer(p, result);
         }
 
+        pure
         override bool deallocate(void[] b)
         {
             return processAllocator.deallocate(b);
@@ -2725,7 +2730,7 @@ class CAllocatorImpl(Allocator, Flag!"indirect" indirect = No.indirect)
     {
     nothrow:
         private Allocator* pimpl;
-        @nogc
+        @nogc pure
         ref Allocator impl()
         {
             return *pimpl;
