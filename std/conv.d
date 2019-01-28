@@ -286,14 +286,14 @@ template to(T)
 
     // Fix issue 6175
     T to(S)(ref S arg)
-        if (isStaticArray!S)
+        if (_std.traits.isStaticArray!S)
     {
         return toImpl!T(arg);
     }
 
     // Fix issue 16108
     T to(S)(ref S arg)
-        if (isAggregateType!S && !isCopyable!S)
+        if (_std.traits.isAggregateType!S && !_std.traits.isCopyable!S)
     {
         return toImpl!T(arg);
     }
@@ -526,6 +526,7 @@ template to(T)
 @safe pure unittest
 {
     import std.exception;
+    import std.meta;
     static foreach (T; AliasSeq!(byte, ubyte, short, ushort, int, uint, long, ulong))
     {
         assertThrown!ConvException(to!T(" 0"));
@@ -599,6 +600,7 @@ if (_std.traits.isImplicitlyConvertible!(S, T) &&
 @safe pure unittest
 {
     import std.exception;
+    import std.meta;
     // Conversion between same size
     static foreach (S; AliasSeq!(byte, short, int, long))
     {{
@@ -676,6 +678,9 @@ if (_std.traits.isStaticArray!S)
 
 @safe pure nothrow unittest
 {
+    import std.range.primitives;
+    import std.traits;
+
     char[4] test = ['a', 'b', 'c', 'd'];
     static assert(!isInputRange!(Unqual!(char[4])));
     assert(to!string(test) == test);
@@ -862,6 +867,8 @@ if (!_std.traits.isImplicitlyConvertible!(S, T) &&
     (is(S == class) || is(S == interface)) && !is(typeof(value.opCast!T()) : T) &&
     (is(T == class) || is(T == interface)) && !is(typeof(new T(value))))
 {
+    import std.traits;
+
     static if (is(T == immutable))
     {
             // immutable <- immutable
@@ -912,6 +919,8 @@ if (!_std.traits.isImplicitlyConvertible!(S, T) &&
 @safe pure unittest
 {
     import std.exception;
+    import std.range.primitives;
+    import std.traits;
 
     alias Identity(T)      =              T;
     alias toConst(T)       =        const T;
@@ -1096,6 +1105,8 @@ if (!(_std.traits.isImplicitlyConvertible!(S, T) &&
 // Bugzilla 8384
 @system unittest
 {
+    import std.meta;
+
     void test1(T)(T lp, string cmp)
     {
         static foreach (e; AliasSeq!(char, wchar, dchar))
@@ -1133,6 +1144,7 @@ if (!(_std.traits.isImplicitlyConvertible!(S, T) &&
 {
     import std.array : appender;
     import std.format : FormatSpec, formatValue;
+    import std.range.primitives;
 
     auto w = appender!T();
     FormatSpec!(ElementEncodingType!T) f;
@@ -1199,6 +1211,7 @@ if (is (T == immutable) && isExactSomeString!T && is(S == enum))
 @safe pure unittest
 {
     import std.exception;
+    import std.meta;
     void dg()
     {
         // string to string conversion
@@ -1251,6 +1264,7 @@ if (is (T == immutable) && isExactSomeString!T && is(S == enum))
 
 @safe pure unittest
 {
+    import std.meta;
     // Conversion representing character value with string
     alias AllChars =
         AliasSeq!( char, const( char), immutable( char),
@@ -1605,6 +1619,8 @@ if (!_std.traits.isImplicitlyConvertible!(S, T) &&
     !_std.traits.isSomeString!S && _std.traits.isDynamicArray!S &&
     !isExactSomeString!T && _std.traits.isArray!T)
 {
+    import std.traits;
+
     alias E = typeof(T.init[0]);
 
     static if (isStaticArray!T)
@@ -1618,6 +1634,8 @@ if (!_std.traits.isImplicitlyConvertible!(S, T) &&
     else
     {
         import std.array : appender;
+        import std.range.primitives;
+
         auto w = appender!(E[])();
         w.reserve(value.length);
         foreach (ref e; value)
@@ -1686,6 +1704,8 @@ private T toImpl(T, S)(S value)
 if (!_std.traits.isImplicitlyConvertible!(S, T) && _std.traits.isAssociativeArray!S &&
     _std.traits.isAssociativeArray!T && !is(T == enum))
 {
+    import std.traits;
+
     /* This code is potentially unsafe.
      */
     alias K2 = KeyType!T;
@@ -2018,6 +2038,7 @@ if (_std.traits.isSomeChar!T && !is(typeof(parse!T(value))) &&
     is(typeof(parse!dchar(value))))
 {
     import std.utf : encode;
+    import std.range.primitives;
 
     immutable dchar codepoint = parse!dchar(value);
     if (!value.empty)
