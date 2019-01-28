@@ -49,9 +49,66 @@ module std.conv;
 
 public import std.ascii : LetterCase;
 
-import std.meta;
-import std.range.primitives;
-import std.traits;
+//import std.meta;
+//import std.range.primitives;
+//import std.traits;
+
+private
+{
+
+template isModuleImport(string import_)
+{
+    enum isModuleImport = __traits(compiles, { mixin("import ", import_, ";"); });
+}
+
+template isSymbolInModule(string module_, string symbol)
+{
+    static if (isModuleImport!module_) {
+        enum import_ = module_ ~ ":" ~ symbol;
+        enum isSymbolInModule = __traits(compiles, { mixin("import ", import_, ";"); });
+    } else {
+        enum isSymbolInModule = false;
+    }
+}
+
+template FailedSymbol(string symbol, string module_)
+{
+    auto FailedSymbol(Args...)(auto ref Args args)
+    {
+        static assert(0, "Symbol \"" ~ symbol ~ "\" not found in " ~ module_);
+    }
+}
+
+struct FromImpl(string module_)
+{
+    template opDispatch(string symbol)
+    {
+        static if (isSymbolInModule!(module_, symbol)) {
+            mixin("import ", module_, "; alias opDispatch = ", symbol, ";");
+        } else {
+            static if (module_.length == 0) {
+                enum opDispatch = FromImpl!(symbol)();
+            } else {
+                enum import_ = module_ ~ "." ~ symbol;
+                static if (isModuleImport!import_) {
+                    enum opDispatch = FromImpl!(import_)();
+                } else {
+                    alias opDispatch = FailedSymbol!(symbol, module_);
+                }
+            }
+        }
+    }
+}
+
+enum from = FromImpl!null();
+enum _std = from.std;
+
+enum isStreamOfChars(R) = _std.range.primitives.isInputRange!R &&
+                          !_std.range.primitives.isInfinite!R &&
+                          isSomeChar!(_std.range.primitives.ElementEncodingType!R) ||
+                          isConvertibleToString!R;
+
+}
 
 // Same as std.string.format, but "self-importing".
 // Helps reduce code and imports, particularly in static asserts.
@@ -83,6 +140,8 @@ class ConvException : Exception
 
 private auto convError(S, T)(S source, string fn = __FILE__, size_t ln = __LINE__)
 {
+    import std.range.primitives;
+
     string msg;
 
     if (source.empty)
@@ -134,7 +193,7 @@ private void parseCheck(alias source)(dchar c, string fn = __FILE__, size_t ln =
 private
 {
     T toStr(T, S)(S src)
-    if (isSomeString!T)
+    if (_std.traits.isSomeString!T)
     {
         // workaround for Bugzilla 14198
         static if (is(S == bool) && is(typeof({ T s = "string"; })))
@@ -145,6 +204,7 @@ private
         {
             import std.array : appender;
             import std.format : FormatSpec, formatValue;
+            import std.range.primitives;
 
             auto w = appender!T();
             FormatSpec!(ElementEncodingType!T) f;
@@ -155,18 +215,18 @@ private
 
     template isExactSomeString(T)
     {
-        enum isExactSomeString = isSomeString!T && !is(T == enum);
+        enum isExactSomeString = _std.traits.isSomeString!T && !is(T == enum);
     }
 
     template isEnumStrToStr(S, T)
     {
-        enum isEnumStrToStr = isImplicitlyConvertible!(S, T) &&
+        enum isEnumStrToStr = _std.traits.isImplicitlyConvertible!(S, T) &&
                               is(S == enum) && isExactSomeString!T;
     }
     template isNullToStr(S, T)
     {
-        enum isNullToStr = isImplicitlyConvertible!(S, T) &&
-                           (is(Unqual!S == typeof(null))) && isExactSomeString!T;
+        enum isNullToStr = _std.traits.isImplicitlyConvertible!(S, T) &&
+                           (is(_std.traits.Unqual!S == typeof(null))) && isExactSomeString!T;
     }
 }
 
@@ -216,6 +276,8 @@ $(PRE $(I UnsignedInteger):
  */
 template to(T)
 {
+    import std.traits;
+
     T to(A...)(A args)
         if (A.length > 0)
     {
@@ -491,9 +553,11 @@ If the source type is implicitly convertible to the target type, $(D
 to) simply performs the implicit conversion.
  */
 private T toImpl(T, S)(S value)
-if (isImplicitlyConvertible!(S, T) &&
+if (_std.traits.isImplicitlyConvertible!(S, T) &&
     !isEnumStrToStr!(S, T) && !isNullToStr!(S, T))
 {
+    import std.traits;
+
     template isSignedInt(T)
     {
         enum isSignedInt = isIntegral!T && isSigned!T;
@@ -605,7 +669,7 @@ if (isImplicitlyConvertible!(S, T) &&
   Converting static arrays forwards to their dynamic counterparts.
  */
 private T toImpl(T, S)(ref S s)
-if (isStaticArray!S)
+if (_std.traits.isStaticArray!S)
 {
     return toImpl!(T, typeof(s[0])[])(s);
 }
@@ -621,7 +685,7 @@ if (isStaticArray!S)
 When source type supports member template function opCast, it is used.
 */
 private T toImpl(T, S)(S value)
-if (!isImplicitlyConvertible!(S, T) &&
+if (!_std.traits.isImplicitlyConvertible!(S, T) &&
     is(typeof(S.init.opCast!T()) : T) &&
     !isExactSomeString!T &&
     !is(typeof(T(value))))
@@ -672,7 +736,7 @@ $(UL $(LI If target type is struct, `T(value)` is used.)
      $(LI If target type is class, $(D new T(value)) is used.))
 */
 private T toImpl(T, S)(S value)
-if (!isImplicitlyConvertible!(S, T) &&
+if (!_std.traits.isImplicitlyConvertible!(S, T) &&
     is(T == struct) && is(typeof(T(value))))
 {
     return T(value);
@@ -721,7 +785,7 @@ if (!isImplicitlyConvertible!(S, T) &&
 
 /// ditto
 private T toImpl(T, S)(S value)
-if (!isImplicitlyConvertible!(S, T) &&
+if (!_std.traits.isImplicitlyConvertible!(S, T) &&
     is(T == class) && is(typeof(new T(value))))
 {
     return new T(value);
@@ -794,7 +858,7 @@ Object-to-object conversions by dynamic casting throw exception when the source 
 non-null and the target is null.
  */
 private T toImpl(T, S)(S value)
-if (!isImplicitlyConvertible!(S, T) &&
+if (!_std.traits.isImplicitlyConvertible!(S, T) &&
     (is(S == class) || is(S == interface)) && !is(typeof(value.opCast!T()) : T) &&
     (is(T == class) || is(T == interface)) && !is(typeof(new T(value))))
 {
@@ -915,10 +979,14 @@ if (!isImplicitlyConvertible!(S, T) &&
 Handles type _to string conversions
 */
 private T toImpl(T, S)(S value)
-if (!(isImplicitlyConvertible!(S, T) &&
+if (!(_std.traits.isImplicitlyConvertible!(S, T) &&
     !isEnumStrToStr!(S, T) && !isNullToStr!(S, T)) &&
-    !isInfinite!S && isExactSomeString!T)
+    !_std.range.primitives.isInfinite!S && isExactSomeString!T)
 {
+    import std.meta;
+    import std.traits;
+    import std.range.primitives;
+
     static if (isExactSomeString!S && value[0].sizeof == ElementEncodingType!T.sizeof)
     {
         // string-to-string with incompatible qualifier conversion
@@ -1059,9 +1127,9 @@ if (!(isImplicitlyConvertible!(S, T) &&
     To string conversion for non copy-able structs
  */
 private T toImpl(T, S)(ref S value)
-if (!(isImplicitlyConvertible!(S, T) &&
+if (!(_std.traits.isImplicitlyConvertible!(S, T) &&
     !isEnumStrToStr!(S, T) && !isNullToStr!(S, T)) &&
-    !isInfinite!S && isExactSomeString!T && !isCopyable!S)
+    !_std.range.primitives.isInfinite!S && isExactSomeString!T && !_std.traits.isCopyable!S)
 {
     import std.array : appender;
     import std.format : FormatSpec, formatValue;
@@ -1355,7 +1423,7 @@ if (is (T == immutable) && isExactSomeString!T && is(S == enum))
 
 // ditto
 @trusted pure private T toImpl(T, S)(S value, uint radix, LetterCase letterCase = LetterCase.upper)
-if (isIntegral!S &&
+if (_std.traits.isIntegral!S &&
     isExactSomeString!T)
 in
 {
@@ -1363,6 +1431,9 @@ in
 }
 do
 {
+    import std.traits;
+    import std.range.primitives;
+
     alias EEType = Unqual!(ElementEncodingType!T);
 
     T toStringRadixConvert(size_t bufLen)(uint runtimeRadix = 0)
@@ -1435,10 +1506,12 @@ Narrowing numeric-numeric conversions throw when the value does not
 fit in the narrower type.
  */
 private T toImpl(T, S)(S value)
-if (!isImplicitlyConvertible!(S, T) &&
-    (isNumeric!S || isSomeChar!S || isBoolean!S) &&
-    (isNumeric!T || isSomeChar!T || isBoolean!T) && !is(T == enum))
+if (!_std.traits.isImplicitlyConvertible!(S, T) &&
+    (_std.traits.isNumeric!S || _std.traits.isSomeChar!S || _std.traits.isBoolean!S) &&
+    (_std.traits.isNumeric!T || _std.traits.isSomeChar!T || _std.traits.isBoolean!T) && !is(T == enum))
 {
+    import std.traits;
+
     enum sSmallest = mostNegative!S;
     enum tSmallest = mostNegative!T;
     static if (sSmallest < 0)
@@ -1528,9 +1601,9 @@ Array-to-array conversion (except when target is a string type)
 converts each element in turn by using `to`.
  */
 private T toImpl(T, S)(S value)
-if (!isImplicitlyConvertible!(S, T) &&
-    !isSomeString!S && isDynamicArray!S &&
-    !isExactSomeString!T && isArray!T)
+if (!_std.traits.isImplicitlyConvertible!(S, T) &&
+    !_std.traits.isSomeString!S && _std.traits.isDynamicArray!S &&
+    !isExactSomeString!T && _std.traits.isArray!T)
 {
     alias E = typeof(T.init[0]);
 
@@ -1610,8 +1683,8 @@ Associative array to associative array conversion converts each key
 and each value in turn.
  */
 private T toImpl(T, S)(S value)
-if (!isImplicitlyConvertible!(S, T) && isAssociativeArray!S &&
-    isAssociativeArray!T && !is(T == enum))
+if (!_std.traits.isImplicitlyConvertible!(S, T) && _std.traits.isAssociativeArray!S &&
+    _std.traits.isAssociativeArray!T && !is(T == enum))
 {
     /* This code is potentially unsafe.
      */
@@ -1855,9 +1928,12 @@ $(UL
   $(LI When the source is a narrow string, normal text parsing occurs.))
 */
 private T toImpl(T, S)(S value)
-if (isInputRange!S && isSomeChar!(ElementEncodingType!S) &&
+if (_std.range.primitives.isInputRange!S &&
+    _std.traits.isSomeChar!(_std.range.primitives.ElementEncodingType!S) &&
     !isExactSomeString!T && is(typeof(parse!T(value))))
 {
+    import std.range.primitives;
+
     scope(success)
     {
         if (!value.empty)
@@ -1870,9 +1946,13 @@ if (isInputRange!S && isSomeChar!(ElementEncodingType!S) &&
 
 /// ditto
 private T toImpl(T, S)(S value, uint radix)
-if (isInputRange!S && !isInfinite!S && isSomeChar!(ElementEncodingType!S) &&
-    isIntegral!T && is(typeof(parse!T(value, radix))))
+if (_std.range.primitives.isInputRange!S &&
+    !_std.range.primitives.isInfinite!S &&
+    _std.traits.isSomeChar!(_std.range.primitives.ElementEncodingType!S) &&
+    _std.traits.isIntegral!T && is(typeof(parse!T(value, radix))))
 {
+    import std.range.primitives;
+
     scope(success)
     {
         if (!value.empty)
@@ -1934,7 +2014,7 @@ Throws: ConvException if the input range contains more than
         fit into a code unit of type T.
 */
 private T toImpl(T, S)(S value)
-if (isSomeChar!T && !is(typeof(parse!T(value))) &&
+if (_std.traits.isSomeChar!T && !is(typeof(parse!T(value))) &&
     is(typeof(parse!dchar(value))))
 {
     import std.utf : encode;
@@ -2070,9 +2150,9 @@ Note:
     to `parse` and do not require lvalues.
 */
 Target parse(Target, Source)(ref Source source)
-if (isInputRange!Source &&
-    isSomeChar!(ElementType!Source) &&
-    is(Unqual!Target == bool))
+if (_std.range.primitives.isInputRange!Source &&
+    _std.traits.isSomeChar!(_std.range.primitives.ElementType!Source) &&
+    is(_std.traits.Unqual!Target == bool))
 {
     import std.ascii : toLower;
 
@@ -2167,9 +2247,12 @@ Throws:
     if no character of the input was meaningfully converted.
 */
 Target parse(Target, Source)(ref Source s)
-if (isSomeChar!(ElementType!Source) &&
-    isIntegral!Target && !is(Target == enum))
+if (_std.traits.isSomeChar!(_std.range.primitives.ElementType!Source) &&
+    _std.traits.isIntegral!Target && !is(Target == enum))
 {
+    import std.traits;
+    import std.range.primitives;
+
     static if (Target.sizeof < int.sizeof)
     {
         // smaller types are handled like integers
@@ -2651,7 +2734,7 @@ do
  *     represented by `s`.
  */
 Target parse(Target, Source)(ref Source s)
-if (isSomeString!Source && !is(Source == enum) &&
+if (_std.traits.isSomeString!Source && !is(Source == enum) &&
     is(Target == enum))
 {
     import std.algorithm.searching : startsWith;
@@ -2734,8 +2817,10 @@ if (isSomeString!Source && !is(Source == enum) &&
  *     parsed, or if an overflow occurred.
  */
 Target parse(Target, Source)(ref Source source)
-if (isInputRange!Source && isSomeChar!(ElementType!Source) && !is(Source == enum) &&
-    isFloatingPoint!Target && !is(Target == enum))
+if (_std.range.primitives.isInputRange!Source &&
+    _std.traits.isSomeChar!(_std.range.primitives.ElementType!Source) &&
+    !is(Source == enum) &&
+    _std.traits.isFloatingPoint!Target && !is(Target == enum))
 {
     import std.ascii : isDigit, isAlpha, toLower, toUpper, isHexDigit;
     import std.exception : enforce;
@@ -3308,9 +3393,11 @@ Throws:
     A $(LREF ConvException) if the range is empty.
  */
 Target parse(Target, Source)(ref Source s)
-if (isSomeString!Source && !is(Source == enum) &&
-    staticIndexOf!(Unqual!Target, dchar, Unqual!(ElementEncodingType!Source)) >= 0)
+if (_std.traits.isSomeString!Source && !is(Source == enum) &&
+    _std.meta.staticIndexOf!(_std.traits.Unqual!Target, dchar, _std.traits.Unqual!(_std.range.primitives.ElementEncodingType!Source)) >= 0)
 {
+    import std.range.primitives;
+
     if (s.empty)
         throw convError!(Source, Target)(s);
     static if (is(Unqual!Target == dchar))
@@ -3347,9 +3434,11 @@ if (isSomeString!Source && !is(Source == enum) &&
 
 /// ditto
 Target parse(Target, Source)(ref Source s)
-if (!isSomeString!Source && isInputRange!Source && isSomeChar!(ElementType!Source) &&
+if (!_std.traits.isSomeString!Source && isInputRange!Source && isSomeChar!(ElementType!Source) &&
     isSomeChar!Target && Target.sizeof >= ElementType!Source.sizeof && !is(Target == enum))
 {
+    import std.range.primitives;
+
     if (s.empty)
         throw convError!(Source, Target)(s);
     Target result = s.front;
@@ -3410,10 +3499,12 @@ Throws:
     A $(LREF ConvException) if the range doesn't represent `null`.
  */
 Target parse(Target, Source)(ref Source s)
-if (isInputRange!Source &&
-    isSomeChar!(ElementType!Source) &&
-    is(Unqual!Target == typeof(null)))
+if (_std.range.primitives.isInputRange!Source &&
+    _std.traits.isSomeChar!(_std.range.primitives.ElementType!Source) &&
+    is(_std.traits.Unqual!Target == typeof(null)))
 {
+    import std.range.primitives;
+
     import std.ascii : toLower;
     foreach (c; "null")
     {
@@ -3486,10 +3577,11 @@ package void skipWS(R)(ref R r)
  *     An array of type `Target`
  */
 Target parse(Target, Source)(ref Source s, dchar lbracket = '[', dchar rbracket = ']', dchar comma = ',')
-if (isSomeString!Source && !is(Source == enum) &&
-    isDynamicArray!Target && !is(Target == enum))
+if (_std.traits.isSomeString!Source && !is(Source == enum) &&
+    _std.traits.isDynamicArray!Target && !is(Target == enum))
 {
     import std.array : appender;
+    import std.range.primitives;
 
     auto result = appender!Target();
 
@@ -3621,7 +3713,7 @@ if (isSomeString!Source && !is(Source == enum) &&
 /// ditto
 Target parse(Target, Source)(ref Source s, dchar lbracket = '[', dchar rbracket = ']', dchar comma = ',')
 if (isExactSomeString!Source &&
-    isStaticArray!Target && !is(Target == enum))
+    _std.traits.isStaticArray!Target && !is(Target == enum))
 {
     static if (hasIndirections!Target)
         Target result = Target.init[0].init;
@@ -3704,8 +3796,8 @@ Lfewerr:
  */
 Target parse(Target, Source)(ref Source s, dchar lbracket = '[',
                              dchar rbracket = ']', dchar keyval = ':', dchar comma = ',')
-if (isSomeString!Source && !is(Source == enum) &&
-    isAssociativeArray!Target && !is(Target == enum))
+if (_std.traits.isSomeString!Source && !is(Source == enum) &&
+    _std.traits.isAssociativeArray!Target && !is(Target == enum))
 {
     alias KeyType = typeof(Target.init.keys[0]);
     alias ValType = typeof(Target.init.values[0]);
@@ -3771,7 +3863,8 @@ if (isSomeString!Source && !is(Source == enum) &&
 }
 
 private dchar parseEscape(Source)(ref Source s)
-if (isInputRange!Source && isSomeChar!(ElementType!Source))
+if (_std.range.primitives.isInputRange!Source &&
+    _std.traits.isSomeChar!(_std.range.primitives.ElementType!Source))
 {
     parseCheck!s('\\');
     if (s.empty)
@@ -3890,6 +3983,8 @@ if (isInputRange!Source && isSomeChar!(ElementType!Source) && !is(Source == enum
     isExactSomeString!Target)
 {
     import std.array : appender;
+    import std.range.primitives;
+
     auto result = appender!Target();
 
     // parse array of chars
@@ -4014,6 +4109,7 @@ private S textImpl(S, U...)(U args)
     {
         import std.array : appender;
         import std.traits : isSomeChar, isSomeString;
+        import std.range.primitives;
 
         auto app = appender!S();
 
@@ -4076,7 +4172,7 @@ if (isOctalLiteral(num))
 
 /// Ditto
 template octal(alias decimalInteger)
-if (isIntegral!(typeof(decimalInteger)))
+if (_std.traits.isIntegral!(typeof(decimalInteger)))
 {
     enum octal = octal!(typeof(decimalInteger))(to!string(decimalInteger));
 }
@@ -4354,7 +4450,7 @@ package void emplaceRef(T, UT, Args...)(ref UT chunk, auto ref Args args)
 }
 // ditto
 package void emplaceRef(UT, Args...)(ref UT chunk, auto ref Args args)
-if (is(UT == Unqual!UT))
+if (is(UT == _std.traits.Unqual!UT))
 {
     emplaceRef!(UT, UT)(chunk, args);
 }
@@ -4362,6 +4458,8 @@ if (is(UT == Unqual!UT))
 //emplace helper functions
 private void emplaceInitializer(T)(scope ref T chunk) @trusted pure nothrow
 {
+    import std.traits;
+
     static if (!hasElaborateAssign!T && isAssignable!T)
         chunk = T.init;
     else
@@ -4481,6 +4579,8 @@ Returns: The newly constructed object.
 T emplace(T, Args...)(T chunk, auto ref Args args)
 if (is(T == class))
 {
+    import std.traits;
+
     static assert(!isAbstractClass!T, T.stringof ~
         " is abstract and it can't be emplaced");
 
@@ -4586,6 +4686,8 @@ Returns: The newly constructed object.
 T emplace(T, Args...)(void[] chunk, auto ref Args args)
 if (is(T == class))
 {
+    import std.traits;
+
     enum classSize = __traits(classInstanceSize, T);
     testEmplaceChunk(chunk, classSize, classInstanceAlignment!T);
     return emplace!T(cast(T)(chunk.ptr), args);
@@ -5630,8 +5732,10 @@ if (isIntegral!T && isOutputRange!(W, char))
     or immutable. In order to retain the constness, use $(REF Unsigned, std,traits).
  */
 auto unsigned(T)(T x)
-if (isIntegral!T)
+if (_std.traits.isIntegral!T)
 {
+    import std.traits;
+
     return cast(Unqual!(Unsigned!T))x;
 }
 
@@ -5679,8 +5783,10 @@ if (isIntegral!T)
 }
 
 auto unsigned(T)(T x)
-if (isSomeChar!T)
+if (_std.traits.isSomeChar!T)
 {
+    import std.traits;
+
     // All characters are unsigned
     static assert(T.min == 0);
     return cast(Unqual!T) x;
@@ -6045,6 +6151,9 @@ if (hexData.isHexLiteral)
 private auto hexStrLiteral(String)(scope String hexData)
 {
     import std.ascii : isHexDigit;
+    import std.traits;
+    import std.range.primitives;
+
     alias C = Unqual!(ElementEncodingType!String);    // char, wchar or dchar
     C[] result;
     result.length = 1 + hexData.length * 2 + 1;       // don't forget the " "
@@ -6102,9 +6211,11 @@ private auto hexStrLiteral(String)(scope String hexData)
 auto toChars(ubyte radix = 10, Char = char, LetterCase letterCase = LetterCase.lower, T)(T value)
     pure nothrow @nogc @safe
 if ((radix == 2 || radix == 8 || radix == 10 || radix == 16) &&
-    (is(Unqual!T == uint) || is(Unqual!T == ulong) ||
-    radix == 10 && (is(Unqual!T == int) || is(Unqual!T == long))))
+    (is(_std.traits.Unqual!T == uint) || is(_std.traits.Unqual!T == ulong) ||
+    radix == 10 && (is(_std.traits.Unqual!T == int) || is(_std.traits.Unqual!T == long))))
 {
+    import std.traits;
+
     alias UT = Unqual!T;
 
     static if (radix == 10)
