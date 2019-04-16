@@ -5366,6 +5366,182 @@ private
     extern(C) pure nothrow Object typecons_d_toObject(void* p);
 }
 
+// Begin addition
+
+template GetAllFields(T)
+{
+    version (all)
+    {
+        import core.internal.traits : Filter;
+        static bool FilterPred(string member)()
+        {
+            static if (__traits(compiles, { T t; }))
+            {
+                T t;
+            }
+            else
+            {
+                enum t = T.init;
+            }
+            static if (__traits(compiles, __traits(getMember, t, member)))
+            {
+                return !isFunction!(__traits(getMember, t, member)) &&
+                    is(typeof(__traits(getMember, t, member)));
+            }
+            else
+            {
+                return false;
+            }
+        }
+        enum GetAllFields = Filter!(FilterPred, __traits(allMembers, T));
+    }
+    else
+    {
+        import core.internal.traits : staticMap;
+        static enum ident(alias U) = __traits(identifier, U);
+        enum GetAllFields = staticMap!(ident, T.tupleof);
+    }
+}
+
+@safe unittest
+{
+    import core.internal.traits : AliasSeq;
+
+    struct S
+    {
+        int x, y;
+        float z;
+    }
+    static assert(GetAllFields!S == AliasSeq!("x", "y", "z"));
+}
+
+template GetAllFieldsExcept(T, M...)
+{
+    import core.internal.traits : Filter;
+    static bool ExceptPred(string except)()
+    {
+        bool r = true;
+        static foreach (mem; M)
+        {
+            static if (mem == except)
+            {
+                r = false;
+                goto break_label;
+            }
+        }
+break_label:
+        return r;
+    }
+    enum GetAllFieldsExcept = Filter!(ExceptPred, GetAllFields!T);
+}
+
+private template ContravariantRhsT(Rhs)
+{
+    static if (is (Rhs == class))
+    {
+        alias ContravariantRhsT = Object;
+    }
+    else static if (is (Rhs == struct))
+    {
+        alias ContravariantRhsT = auto ref const Unqual!Rhs;
+    }
+    else
+    {
+        static assert (0, "Unsupported type " ~ Rhs.stringof ~ ". Rhs must be a `class` or `struct`");
+    }
+}
+
+mixin template ImplementOpAssignExcept(M...)
+{
+    mixin ImplementOpAssign!(GetAllFieldsExcept!(typeof(this), M));
+}
+
+mixin template ImplementOpAssign(M...)
+{
+    static assert(is(typeof(this) == struct) || is(typeof(this) == class));
+
+    void opAssign(ContravariantRhsT!(typeof(this)) rhs)
+    {
+        static void implAssignFn(U1, U2)(auto ref U1 u1, auto ref U2 u2)
+        {
+            u1 = u2;
+        }
+
+        alias T = typeof(this);
+        //auto rhs = (() @trusted => cast(T) po)();
+        //if (rhs is null) return 1;
+
+        static if (M.length == 0)
+        {
+            alias U = GetAllFields!T;
+        }
+        else
+        {
+            alias U = M;
+        }
+        enum len = U.length;
+
+        static foreach (i; 0 .. len)
+        {{
+
+            static if (is(typeof(U[i]) == string))
+            {
+                enum fieldName = U[i];
+                // If assert fails, propagate compiler error
+                static assert(is(typeof(__traits(getMember, this, fieldName))),
+                              typeof(__traits(getMember, this, fieldName)));
+
+                static if (((i + 1) < len) && !is(typeof(U[i + 1]) == string))
+                {
+                    // If the next element is not a string, then it must be the comparator
+                    alias assignFun = U[i + 1];
+                }
+                else
+                {
+                    alias assignFun = implAssignFn;
+                }
+
+                alias thisMember = __traits(getMember, this, fieldName);
+                alias rhsMember = __traits(getMember, rhs, fieldName);
+
+                // If we can't call the function with the args, throw the compiler error
+                static assert(is(typeof({assignFun(thisMember, rhsMember);})),
+                        typeof({assignFun(thisMember, rhsMember);}));
+
+                assignFun(__traits(getMember, this, fieldName), __traits(getMember, rhs, fieldName));
+            }
+        }}
+    }
+}
+
+@safe unittest
+{
+    struct S
+    {
+        int x, y, z;
+
+        mixin ImplementOpAssign!"x";
+    }
+
+    auto s1 = S(1, 2, 3);
+    S s2;
+    s1 = s2;
+    assert(s1 == S(0, 2, 3));
+
+    struct S2
+    {
+        int x, y, z;
+
+        mixin ImplementOpAssignExcept!"y";
+    }
+    auto ss1 = S2(1, 2, 3);
+    S2 ss2;
+    ss1 = ss2;
+    assert(ss1 == S2(0, 2, 0));
+}
+
+// End addition
+
 /*
  * Avoids opCast operator overloading.
  */
