@@ -1,5 +1,97 @@
 import core.memory : pureMalloc, pureFree;
 
+private struct StatsAllocator
+{
+    version(CoreUnittest) size_t bytesUsed;
+
+    @trusted @nogc nothrow pure
+    void* allocate(size_t bytes) shared
+    {
+        import core.memory : pureMalloc;
+        if (!bytes) return null;
+
+        auto p = pureMalloc(bytes);
+        if (p is null) return null;
+        enum alignment = size_t.sizeof;
+        assert(cast(size_t) p % alignment == 0);
+
+        version (CoreUnittest)
+        {
+            static if (is(typeof(this) == shared))
+            {
+                import core.atomic : atomicOp;
+                atomicOp!"+="(bytesUsed, bytes);
+            }
+            else
+            {
+                bytesUsed += bytes;
+            }
+        }
+        return p;
+    }
+
+    @system @nogc nothrow pure
+    bool deallocate(void[] b) shared
+    {
+        import core.memory : pureFree;
+        assert(b !is null);
+
+        version (CoreUnittest)
+        {
+            static if (is(typeof(this) == shared))
+            {
+                import core.atomic : atomicOp;
+                assert(atomicOp!">="(bytesUsed, b.length));
+                atomicOp!"-="(bytesUsed, b.length);
+            }
+            else
+            {
+                assert(bytesUsed >= b.length);
+                bytesUsed -= b.length;
+            }
+        }
+        pureFree(b.ptr);
+        return true;
+    }
+
+    static shared StatsAllocator instance;
+}
+
+version (CoreUnittest)
+{
+    private shared StatsAllocator allocator;
+
+    private @nogc nothrow pure @trusted
+    void* pureAllocate(size_t n)
+    {
+        return (cast(void* function(size_t) @nogc nothrow pure)(&_allocate))(n);
+    }
+
+    private @nogc nothrow @safe
+    void* _allocate(size_t n)
+    {
+        return allocator.allocate(n);
+    }
+
+    private @nogc nothrow pure
+    void pureDeallocate(T)(T[] b)
+    {
+        return (cast(void function(T[]) @nogc nothrow pure)(&_deallocate!(T)))(b);
+    }
+
+    private @nogc nothrow
+    void _deallocate(T)(T[] b)
+    {
+        allocator.deallocate(b);
+    }
+}
+else
+{
+    alias pureAllocate = pureMalloc;
+
+    void pureDeallocate(T)(T[] b) { pureFree(b.ptr); }
+}
+
 struct __mutable(T)
 {
     private union
@@ -65,13 +157,14 @@ struct rcstruct
     {
         static if (is(Q == immutable))
         {
-            rc = cast(shared RC_T*) pureMalloc(RC_T.sizeof);
+            rc = cast(shared RC_T*) pureAllocate(RC_T.sizeof);
             setIsShared(true);
         }
         else
         {
-            rc = cast(RC_T*) pureMalloc(RC_T.sizeof);
+            rc = cast(RC_T*) pureAllocate(RC_T.sizeof);
         }
+        *rc.unwrap = 0;
         addRef();
     }
 
@@ -110,7 +203,7 @@ struct rcstruct
     this(ref typeof(this) rhs) immutable
     {
         // Can't have an immutable ref to a mutable. Create a new RC
-        rc = cast(shared RC_T*) pureMalloc(RC_T.sizeof);
+        rc = cast(shared RC_T*) pureAllocate(RC_T.sizeof);
         setIsShared(true);
     }
 
@@ -130,7 +223,7 @@ struct rcstruct
         else
         {
             // Can't have an immutable ref to a mutable. Create a new RC
-            rc = cast(shared RC_T*) pureMalloc(RC_T.sizeof);
+            rc = cast(shared RC_T*) pureAllocate(RC_T.sizeof);
             setIsShared(true);
         }
     }
@@ -152,13 +245,16 @@ struct rcstruct
     {
         assert(rc.unwrap !is null);
         RC_T counter = rcOp!"-="(1);
-        if (counter == 0) deallocate();
+        if ((counter == 0) || (isShared() && counter == isSharedMask))
+        {
+            deallocate();
+        }
         return null;
     }
 
     private void deallocate() pure const scope
     {
-        pureFree(rc.unwrap);
+        pureDeallocate(rc.unwrap[0 .. 1]);
     }
 
     ~this() pure const scope
@@ -182,9 +278,14 @@ struct rcstruct
     }
 }
 
+version(CoreUnittest)
 unittest
 {
-    rcstruct a = rcstruct(1);
-    const rcstruct ca = const rcstruct(1);
-    immutable rcstruct ia = immutable rcstruct(1);
+    {
+        rcstruct a = rcstruct(1);
+        const rcstruct ca = const rcstruct(1);
+        immutable rcstruct ia = immutable rcstruct(1);
+    }
+
+    assert(allocator.bytesUsed == 0, "rcstruct leakes memory");
 }
