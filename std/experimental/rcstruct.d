@@ -132,13 +132,7 @@ struct rcstruct
     @nogc nothrow pure @safe scope
     bool isShared() const
     {
-        debug
-        {
-            import core.stdc.stdio;
-
-        }
-        auto x = rc.unwrap;
-        return !!atomicOp!">="(*((() @trusted => cast(shared RC_T*) rc.unwrap)()), isSharedMask);
+        return !!atomicOp!"&"(*((() @trusted => cast(shared RC_T*) rc.unwrap)()), isSharedMask);
     }
 
     @nogc nothrow pure @safe scope
@@ -266,7 +260,7 @@ struct rcstruct
         return null;
     }
 
-    @nogc nothrow pure @safe scope
+    @nogc nothrow pure @trusted scope
     private void* delRef() const
     {
         assert(rc.unwrap !is null);
@@ -278,7 +272,7 @@ struct rcstruct
         return null;
     }
 
-    @nogc nothrow pure @trusted scope
+    @nogc nothrow pure @system scope
     private void deallocate() const
     {
         pureDeallocate(rc.unwrap[0 .. 1]);
@@ -300,7 +294,7 @@ struct rcstruct
     }
 
     pure nothrow @nogc @system scope
-    auto getUnsafeValue() const
+    RC_T* getUnsafeValue() const
     {
         return rc.unwrap;
     }
@@ -318,13 +312,31 @@ unittest
         immutable rcstruct ia = immutable rcstruct(1);
         assert(ia.isUnique);
 
+        // A const reference will increase the ref count
         const c_cp_a = a;
+        assert((() @trusted => *cast(int*)a.getUnsafeValue() == 2)());
         const c_cp_ca = ca;
+        assert((() @trusted => *cast(int*)ca.getUnsafeValue() == 2)());
         const c_cp_ia = ia;
+        assert((() @trusted => *cast(int*)ia.getUnsafeValue() == 2)());
 
+        // An immutable from a mutable reference will create a copy
         immutable i_cp_a = a;
+        assert((() @trusted => *cast(int*)a.getUnsafeValue() == 2)());
+        assert((() @trusted => *cast(int*)i_cp_a.getUnsafeValue() == 1)());
+        // An immutable from a const to a mutable reference will create a copy
         immutable i_cp_ca = ca;
+        assert((() @trusted => *cast(int*)ca.getUnsafeValue() == 2)());
+        assert((() @trusted => *cast(int*)i_cp_ca.getUnsafeValue() == 1)());
+        // An immutable from an immutable reference will increase the ref count
         immutable i_cp_ia = ia;
+        assert((() @trusted => *cast(int*)ia.getUnsafeValue() == 3)());
+        assert((() @trusted => *cast(int*)i_cp_ia.getUnsafeValue() == 3)());
+        // An immutable from a const to an immutable reference will increase the ref count
+        immutable i_cp_c_cp_ia = c_cp_ia;
+        assert((() @trusted => *cast(int*)c_cp_ia.getUnsafeValue() == 4)());
+        assert((() @trusted => *cast(int*)i_cp_c_cp_ia.getUnsafeValue() == 4)());
+        assert((() @trusted => i_cp_c_cp_ia.getUnsafeValue() == c_cp_ia.getUnsafeValue())());
     }();
 
     assert(allocator.bytesUsed == 0, "rcstruct leakes memory");
