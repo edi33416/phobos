@@ -120,54 +120,43 @@ struct __mutable(T)
     }
 }
 
-struct rcstruct
+struct RefCount
 {
     import core.atomic : atomicOp;
 
-    alias RC_T = int;
-    __mutable!(RC_T*) rc;
-
-    private static enum isSharedMask = 1 << ((RC_T.sizeof * 8) - 1);
+    alias CounterType = uint;
+    private __mutable!(CounterType*) rc;
 
     @nogc nothrow pure @safe scope
     bool isShared() const
     {
-        return !!atomicOp!"&"(*((() @trusted => cast(shared RC_T*) rc.unwrap)()), isSharedMask);
-    }
-
-    @nogc nothrow pure @safe scope
-    void setIsShared(bool _isShared) const
-    {
-        if (_isShared)
-        {
-            atomicOp!"|="(*((() @trusted => cast(shared RC_T*) rc.unwrap)()), isSharedMask);
-        }
+        return (cast(size_t) rc.unwrap) % 8 == 0;
     }
 
     @nogc nothrow pure @trusted scope
-    RC_T rcOp(string op)(RC_T val) const
+    private CounterType rcOp(string op)(CounterType val) const
     {
         if (isShared())
         {
-            return cast(RC_T)(atomicOp!op(*(cast(shared RC_T*) rc.unwrap), val));
+            return cast(CounterType)(atomicOp!op(*(cast(shared CounterType*) rc.unwrap), val));
         }
         else
         {
-            mixin("return cast(RC_T)(*(cast(RC_T*) rc.unwrap)" ~ op ~ "val);");
+            mixin("return cast(CounterType)(*(cast(CounterType*) rc.unwrap)" ~ op ~ "val);");
         }
     }
 
     @nogc nothrow pure @trusted scope
     this(this Q)(int) const
     {
+        CounterType* t = cast(CounterType*) pureAllocate(2 * CounterType.sizeof);
         static if (is(Q == immutable))
         {
-            rc = cast(shared RC_T*) pureAllocate(RC_T.sizeof);
-            setIsShared(true);
+            rc = cast(shared CounterType*) t;
         }
         else
         {
-            rc = cast(RC_T*) pureAllocate(RC_T.sizeof);
+            rc = cast(CounterType*) (t + 1);
         }
         *rc.unwrap = 0;
         addRef();
@@ -178,7 +167,6 @@ struct rcstruct
         assert(rc.unwrap == rhs.rc.unwrap);
         if (rhs.rc.unwrap !is null)
         {
-            setIsShared(rhs.isShared());
             assert(isShared() == rhs.isShared());
             addRef();
         }
@@ -215,8 +203,7 @@ struct rcstruct
     this(ref typeof(this) rhs) immutable
     {
         // Can't have an immutable ref to a mutable. Create a new RC
-        rc = (() @trusted => cast(shared RC_T*) pureAllocate(RC_T.sizeof))();
-        setIsShared(true);
+        rc = (() @trusted => cast(shared CounterType*) pureAllocate(2 * CounterType.sizeof))();
         *rc.unwrap = 0;
         addRef();
     }
@@ -231,15 +218,13 @@ struct rcstruct
             rc = (() @trusted => cast(immutable) rhs.rc)();
             if (rc.unwrap !is null)
             {
-                setIsShared(rhs.isShared());
                 addRef();
             }
         }
         else
         {
             // Can't have an immutable ref to a mutable. Create a new RC
-            rc = (() @trusted => cast(shared RC_T*) pureAllocate(RC_T.sizeof))();
-            setIsShared(true);
+            rc = (() @trusted => cast(shared CounterType*) pureAllocate(2 * CounterType.sizeof))();
             *rc.unwrap = 0;
             addRef();
         }
@@ -264,8 +249,8 @@ struct rcstruct
     private void* delRef() const
     {
         assert(rc.unwrap !is null);
-        RC_T counter = rcOp!"-="(1);
-        if ((counter == 0) || (isShared() && counter == isSharedMask))
+        CounterType counter = rcOp!"-="(1);
+        if (counter == 0)
         {
             deallocate();
         }
@@ -275,7 +260,14 @@ struct rcstruct
     @nogc nothrow pure @system scope
     private void deallocate() const
     {
-        pureDeallocate(rc.unwrap[0 .. 1]);
+        if (isShared())
+        {
+            pureDeallocate(rc.unwrap[0 .. 2]);
+        }
+        else
+        {
+            pureDeallocate((rc.unwrap - 1)[0 .. 2]);
+        }
     }
 
     @nogc nothrow pure @trusted scope
@@ -290,11 +282,11 @@ struct rcstruct
     pure nothrow @safe @nogc scope
     bool isUnique() const
     {
-        return rcOp!"=="(1) || rcOp!"=="(isSharedMask | 1);
+        return (rc.unwrap is null) || rcOp!"=="(1);
     }
 
     pure nothrow @nogc @system scope
-    RC_T* getUnsafeValue() const
+    CounterType* getUnsafeValue() const
     {
         return rc.unwrap;
     }
@@ -305,11 +297,11 @@ unittest
 {
     () @safe @nogc pure nothrow
     {
-        rcstruct a = rcstruct(1);
+        RefCount a = RefCount(1);
         assert(a.isUnique);
-        const rcstruct ca = const rcstruct(1);
+        const RefCount ca = const RefCount(1);
         assert(ca.isUnique);
-        immutable rcstruct ia = immutable rcstruct(1);
+        immutable RefCount ia = immutable RefCount(1);
         assert(ia.isUnique);
 
         // A const reference will increase the ref count
@@ -337,7 +329,13 @@ unittest
         assert((() @trusted => *cast(int*)c_cp_ia.getUnsafeValue() == 4)());
         assert((() @trusted => *cast(int*)i_cp_c_cp_ia.getUnsafeValue() == 4)());
         assert((() @trusted => i_cp_c_cp_ia.getUnsafeValue() == c_cp_ia.getUnsafeValue())());
+
+        RefCount t;
+        assert(t.isUnique());
+        RefCount t2 = t;
+        assert(t.isUnique());
+        assert(t2.isUnique());
     }();
 
-    assert(allocator.bytesUsed == 0, "rcstruct leakes memory");
+    assert(allocator.bytesUsed == 0, "RefCount leakes memory");
 }
