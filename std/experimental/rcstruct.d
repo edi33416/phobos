@@ -177,26 +177,26 @@ struct __RefCount
     };
 
     @nogc nothrow pure @safe scope
-    this(ref typeof(this) rhs)
+    this(return scope ref typeof(this) rhs)
     {
         mixin(copyCtorIncRef);
     }
 
     // { Get a const obj
     @nogc nothrow pure @safe scope
-    this(ref typeof(this) rhs) const
+    this(return scope ref typeof(this) rhs) const
     {
         mixin(copyCtorIncRef);
     }
 
     @nogc nothrow pure @safe scope
-    this(const ref typeof(this) rhs) const
+    this(return scope const ref typeof(this) rhs) const
     {
         mixin(copyCtorIncRef);
     }
 
     @nogc nothrow pure @safe scope
-    this(immutable ref typeof(this) rhs) const
+    this(return scope immutable ref typeof(this) rhs) const
     {
         mixin(copyCtorIncRef);
     }
@@ -204,7 +204,7 @@ struct __RefCount
 
     // { Get an immutable obj
     @nogc nothrow pure @safe scope
-    this(ref typeof(this) rhs) immutable
+    this(return scope ref typeof(this) rhs) immutable
     {
         // Can't have an immutable ref to a mutable. Create a new RC
         rc = (() @trusted => cast(shared CounterType*) pureAllocate(2 * CounterType.sizeof))();
@@ -213,7 +213,7 @@ struct __RefCount
     }
 
     @nogc nothrow pure @safe scope
-    this(const ref typeof(this) rhs) immutable
+    this(return scope const ref typeof(this) rhs) immutable
     {
         if (rhs.isShared())
         {
@@ -235,18 +235,19 @@ struct __RefCount
     }
 
     @nogc nothrow pure @safe scope
-    this(immutable ref typeof(this) rhs) immutable
+    this(return scope immutable ref typeof(this) rhs) immutable
     {
         mixin(copyCtorIncRef);
     }
     // } Get an immutable obj
 
     @nogc nothrow pure @safe scope
-    ref __RefCount opAssign(ref typeof(this) rhs)
+    ref __RefCount opAssign(return scope ref typeof(this) rhs)
     {
         if (rhs.isInitialized() && rc.unwrap == rhs.rc.unwrap)
         {
-            return this;
+            return rhs;
+            //return this;
         }
         if (rhs.isInitialized())
         {
@@ -256,8 +257,9 @@ struct __RefCount
         {
             delRef();
         }
-        rc = rhs.rc;
-        return this;
+        () @trusted { rc = rhs.rc; }();
+        return rhs;
+        //return this;
     }
 
     @nogc nothrow pure @safe scope
@@ -372,7 +374,7 @@ unittest
 version(CoreUnittest)
 unittest
 {
-    () @safe @nogc pure nothrow
+    () @safe @nogc pure nothrow scope
     {
         __RefCount a = __RefCount(1);
         assert(a.isUnique);
@@ -398,13 +400,14 @@ unittest
         @nogc nothrow pure @trusted scope
         this(this Q)(int sz) const
         {
-            rc = __RefCount(1);
             static if (is(Q == immutable))
             {
+                rc = immutable __RefCount(1);
                 payload = (cast(immutable int*) pureAllocate(sz * int.sizeof))[0 .. sz];
             }
             else
             {
+                rc = __RefCount(1);
                 payload = (cast(int*) pureAllocate(sz * int.sizeof))[0 .. sz];
             }
         }
@@ -415,26 +418,26 @@ unittest
         };
 
         @nogc nothrow pure @safe scope
-        this(ref typeof(this) rhs)
+        this(return scope ref typeof(this) rhs)
         {
             mixin(copyCtorIncRef);
         }
 
         // { Get a const obj
         @nogc nothrow pure @safe scope
-        this(ref typeof(this) rhs) const
+        this(return scope ref typeof(this) rhs) const
         {
             mixin(copyCtorIncRef);
         }
 
         @nogc nothrow pure @safe scope
-        this(const ref typeof(this) rhs) const
+        this(return scope const ref typeof(this) rhs) const
         {
             mixin(copyCtorIncRef);
         }
 
         @nogc nothrow pure @safe scope
-        this(immutable ref typeof(this) rhs) const
+        this(return scope immutable ref typeof(this) rhs) const
         {
             mixin(copyCtorIncRef);
         }
@@ -442,7 +445,7 @@ unittest
 
         // { Get an immutable obj
         @nogc nothrow pure @trusted scope
-        this(ref typeof(this) rhs) immutable
+        this(return scope ref typeof(this) rhs) immutable
         {
             // Can't have an immutable ref to a mutable. Create a new RC
             rc = rhs.rc;
@@ -453,7 +456,7 @@ unittest
         }
 
         @nogc nothrow pure @safe scope
-        this(const ref typeof(this) rhs) immutable
+        this(return scope const ref typeof(this) rhs) immutable
         {
             rc = rhs.rc;
             if (rhs.rc.isShared)
@@ -472,18 +475,19 @@ unittest
         }
 
         @nogc nothrow pure @safe scope
-        this(immutable ref typeof(this) rhs) immutable
+        this(return scope immutable ref typeof(this) rhs) immutable
         {
             mixin(copyCtorIncRef);
         }
         // } Get an immutable obj
 
         @nogc nothrow pure @safe scope
-        ref TestRC opAssign(ref typeof(this) rhs)
+        ref TestRC opAssign(return ref typeof(this) rhs)
         {
             if (payload is rhs.payload)
             {
-                return this;
+                return rhs;
+                //return this;
             }
             if (rc.isInitialized && rc.isUnique)
             {
@@ -491,7 +495,8 @@ unittest
             }
             payload = rhs.payload;
             rc = rhs.rc;
-            return this;
+            return rhs;
+            //return this;
         }
 
         @nogc nothrow pure @trusted scope
@@ -526,12 +531,12 @@ unittest
         assert(it.payload is c_cp_it.payload);
 
         // An immutable from a mutable reference will create a copy
-        immutable i_cp_t = t;
+        immutable i_cp_t = immutable TestRC(t);
         assert((() @trusted => *cast(int*)t.rc.getUnsafeValue() == 2)());
         assert((() @trusted => *cast(int*)i_cp_t.rc.getUnsafeValue() == 1)());
         assert(t.payload !is i_cp_t.payload);
         // An immutable from a const to a mutable reference will create a copy
-        immutable i_cp_ct = ct;
+        immutable i_cp_ct = immutable TestRC(ct);
         assert((() @trusted => *cast(int*)ct.rc.getUnsafeValue() == 2)());
         assert((() @trusted => *cast(int*)i_cp_ct.rc.getUnsafeValue() == 1)());
         assert(ct.payload !is i_cp_ct.payload);
