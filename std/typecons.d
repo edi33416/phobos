@@ -5416,7 +5416,7 @@ private template ContravariantRhsT(Rhs)
 {
     static if (is (Rhs == class))
     {
-        alias ContravariantRhsT = Object;
+        alias ContravariantRhsT = const Object;
     }
     else static if (is (Rhs == struct))
     {
@@ -5444,12 +5444,6 @@ mixin template ImplementOrdered(M...)
             else static if (__traits(compiles, u1.opCmp(u2)))
             {
                 r = u1.opCmp(u2);
-            }
-            else static if (__traits(compiles, u1.opCmp((() @trusted => cast(Unqual!U2) u2)())) &&
-                            is(U2 == class))
-            {
-                // Required because of `object.opCmp(Object)` doesn't accept qualified types.
-                r = u1.opCmp((() @trusted => cast(Unqual!U2) u2)());
             }
             else static if (__traits(compiles, u1 < u2))
             {
@@ -5489,9 +5483,8 @@ mixin template ImplementOrdered(M...)
         enum len = U.length;
 
         int r = 0;
-        static foreach (i; 0 .. len)
+        static foreach (i, unused; U)
         {{
-
             static if (is(typeof(U[i]) == string))
             {
                 enum fieldName = U[i];
@@ -5531,7 +5524,7 @@ mixin template ImplementOrdered(M...)
 {
     class Widget
     {
-        override const /*@nogc*/ nothrow pure @safe scope
+        override const @nogc nothrow pure @safe scope
         {
             mixin ImplementOrdered;
             mixin ImplementEquals;
@@ -5549,7 +5542,7 @@ mixin template ImplementOrdered(M...)
 
     class TextWidget : Widget
     {
-        override const /*@nogc*/ nothrow pure @safe scope
+        override const @nogc nothrow pure @safe scope
         {
             mixin ImplementOrdered;
             mixin ImplementEquals;
@@ -5557,15 +5550,6 @@ mixin template ImplementOrdered(M...)
         }
         this(int x, int y) { super(x, y); }
     }
-
-    //auto w1 = new Widget(10, 20);
-    //auto w2 = new TextWidget(10, 21);
-    //assert(w1.opCmp(w2) != w2.opCmp(w1));
-    //assert((w1 < w2) != (w2 < w1));
-    //assert((() @trusted => w1 != w2)());
-    //assert(!w1.opEquals(w2));
-    //Widget w3;
-    //assert(!(w1 < w3) && (w1 > w3) && (w1.opCmp(w3) == 1));
 
     auto w1 = new Widget(10, 20);
     auto w2 = new Widget(10, 20);
@@ -5589,7 +5573,7 @@ mixin template ImplementOrdered(M...)
 {
     class Widget
     {
-        override const /*@nogc*/ nothrow pure @safe scope
+        override const @nogc nothrow pure @safe scope
         {
             mixin ImplementOrdered!("x");
             mixin ImplementEquals!("x");
@@ -5607,7 +5591,7 @@ mixin template ImplementOrdered(M...)
 
     class TextWidget : Widget
     {
-        override const /*@nogc*/ nothrow pure @safe scope
+        override const @nogc nothrow pure @safe scope
         {
             mixin ImplementOrdered!("x");
             mixin ImplementEquals!("x");
@@ -5633,7 +5617,7 @@ mixin template ImplementOrdered(M...)
         static bool eq(int a, int b) { return (a - b + 1) == 0; };
         static size_t hashfn(int a, size_t seed) { return hashOf(a, seed); }
 
-        override const /*@nogc*/ nothrow pure @safe scope
+        override const @nogc nothrow pure @safe scope
         {
             mixin ImplementOrdered!("x", "y", cmp);
             mixin ImplementEquals!("x", "y", eq);
@@ -5664,7 +5648,7 @@ mixin template ImplementOrdered(M...)
     class Test
     {
 
-        override const /*@nogc*/ nothrow pure @safe scope
+        override const @nogc nothrow pure @safe scope
         {
             mixin ImplementOrdered!"length";
             mixin ImplementEquals!"length";
@@ -5780,7 +5764,7 @@ mixin template ImplementHashExcept(M...)
             this.format = format;
         }
 
-        override const /*@nogc*/ nothrow pure @safe scope
+        override const @nogc nothrow pure @safe scope
         {
             mixin ImplementOrderedExcept!("format");
             mixin ImplementEqualsExcept!("format");
@@ -5803,7 +5787,7 @@ mixin template ImplementHashExcept(M...)
 {
     class Widget
     {
-        override @safe
+        override const @nogc nothrow pure @safe scope
         {
             mixin ImplementOrdered;
             mixin ImplementEquals;
@@ -5820,7 +5804,7 @@ mixin template ImplementHashExcept(M...)
 
     class Composer
     {
-        override @safe
+        override const @nogc nothrow pure @safe scope
         {
             mixin ImplementOrdered;
             mixin ImplementEquals;
@@ -5859,17 +5843,11 @@ mixin template ImplementEquals(M...)
 
     bool opEquals(ContravariantRhsT!(typeof(this)) rhso)
     {
-        // TODO EDI: removing @safe infers @system. Why?
-        @safe
-        static bool compareEqual(U1, U2)(const U1 u1, const U2 u2)
+        static bool compareEqual(U1, U2)(U1 u1, U2 u2)
         {
             static if (__traits(compiles, __equals(u1, u2)))
             {
                 bool r = __equals(u1, u2);
-            }
-            else static if (__traits(compiles, u1.equals(u2)))
-            {
-                bool r = u1.equals(u2);
             }
             else static if (__traits(compiles, u1.opEquals(u2)))
             {
@@ -5913,7 +5891,7 @@ mixin template ImplementEquals(M...)
         enum len = U.length;
 
         bool r = true;
-        static foreach (i; 0 .. len)
+        static foreach (i, unused; U)
         {{
 
             static if (is(typeof(U[i]) == string))
@@ -5970,7 +5948,7 @@ mixin template ImplementHash(M...)
         enum len = U.length;
 
         size_t r = 0;
-        static foreach (i; 0 .. len)
+        static foreach (i, unused; U)
         {{
 
             static if (is(typeof(U[i]) == string))
